@@ -52,7 +52,7 @@ def clickable_logo(img_path, link_url, width=150):
             unsafe_allow_html=True
         )
     except Exception:
-        st.warning("⚠️ Logo file not found. Please keep 'magicbus_logo.png' in the same folder.")
+        st.warning("Logo file not found. Please keep 'magicbus_logo.png' in the same folder.")
 
 # -------------------------------------------
 # REMOVE BLANK + FOOTER ROWS
@@ -109,13 +109,13 @@ def apply_schema_types(df: pd.DataFrame):
 # -------------------------------------------
 def process_housevisit_dedupe(df: pd.DataFrame):
 
-    # 1️⃣ Clean footer & blank rows
+    # 1️ Clean footer & blank rows
     df = remove_footer_and_blank_rows(df)
 
-    # 2️⃣ Apply schema
+    #  Apply schema
     df = apply_schema_types(df)
 
-    # 3️⃣ Build dedupe key (EXACT REQUIRED SEQUENCE)
+    #  Build dedupe key (EXACT REQUIRED SEQUENCE)
     df["COMBINED"] = (
         df["HOUSE VISIT TYPE"] + " | " +
         df["CHILD ID"] + " | " +
@@ -127,7 +127,7 @@ def process_housevisit_dedupe(df: pd.DataFrame):
         df["YM Name"]
     )
 
-    # 4️⃣ Identify duplicates
+    #  Identify duplicates
     df["duplicat"] = df.groupby("COMBINED").cumcount()
 
     deduped = df[df["duplicat"] == 0].copy()
@@ -139,7 +139,7 @@ def process_housevisit_dedupe(df: pd.DataFrame):
         "removed": len(removed),
     }
 
-    # 5️⃣ Write Excel outputs (in memory)
+    # Write Excel outputs (in memory)
     main_file = BytesIO()
     with pd.ExcelWriter(main_file, engine="openpyxl") as writer:
         deduped.to_excel(writer, index=False, sheet_name="Deduped")
