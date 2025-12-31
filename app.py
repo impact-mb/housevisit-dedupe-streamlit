@@ -45,9 +45,11 @@ def clickable_logo(img_path, link_url, width=150):
         encoded = base64.b64encode(img_bytes).decode()
         st.markdown(
             f"""
+            <div style="text-align: center;">
             <a href="{link_url}" target="_blank">
                 <img src="data:image/png;base64,{encoded}" width="{width}" />
             </a>
+            </div>
             """,
             unsafe_allow_html=True
         )
