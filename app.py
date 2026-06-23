@@ -14,12 +14,12 @@ Core modules
 3. Clean unique dataset generation after duplicate removal.
 4. CXO-friendly executive dashboard with clear denominators and percentage metrics.
 5. Clean-data summary charts after data cleaning:
+   - House Visit Type-wise visits
    - Region-wise house visits
    - State-wise house visits
    - Funder-wise house visits
    - TMO-wise house visits
    - YM-wise house visits
-   - House Visit Type-wise visits
 6. Methodology / FAQ page explaining every KPI, dashboard section, and downloadable sheet.
 7. Remarks intelligence using clean unique data only:
    - Same remark repeated flag
@@ -32,7 +32,7 @@ Core modules
 Deployment notes
 ----------------
 This app is designed for free Streamlit Cloud deployment using open-source packages:
-streamlit, pandas, openpyxl, plotly.
+streamlit, pandas, openpyxl, plotly, matplotlib.
 
 Do not hard-code production passwords in this file. Use .streamlit/secrets.toml locally
 and Streamlit Cloud secrets online.
@@ -48,6 +48,10 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+# PDF report generation uses matplotlib because it is open-source and works well on Streamlit Cloud.
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 
 # ============================================================
@@ -423,7 +427,7 @@ def make_summary_table(df: pd.DataFrame, group_col: str, top_n: int = 20) -> pd.
 
 
 def render_labeled_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: str, orientation: str = "v"):
-    """Render a Plotly bar chart with value labels for CXO-friendly readability."""
+    """Render a Plotly bar chart with labels placed inside the graph area."""
     if data.empty:
         st.info(f"No data available for {title}.")
         return
@@ -438,21 +442,68 @@ def render_labeled_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: 
             text=y_col,
             title=title,
         )
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_layout(yaxis_title="", xaxis_title="House visits", height=max(420, 28 * len(plot_df)))
+        fig.update_traces(
+            texttemplate="%{text:,}",
+            textposition="inside",
+            insidetextanchor="end",
+            cliponaxis=False,
+        )
+        fig.update_layout(yaxis_title="", xaxis_title="House visits", height=max(420, 30 * len(plot_df)))
     else:
         fig = px.bar(data, x=x_col, y=y_col, text=y_col, title=title)
-        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_traces(
+            texttemplate="%{text:,}",
+            textposition="inside",
+            insidetextanchor="middle",
+            cliponaxis=False,
+        )
         fig.update_layout(xaxis_title="", yaxis_title="House visits", height=460)
 
     fig.update_layout(
-        margin=dict(l=20, r=40, t=60, b=40),
+        margin=dict(l=20, r=40, t=65, b=40),
         title_x=0.02,
         uniformtext_minsize=10,
         uniformtext_mode="show",
+        bargap=0.22,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
+def render_labeled_pie_chart(data: pd.DataFrame, name_col: str, value_col: str, title: str):
+    """Render a Plotly pie chart with category label, value, and percentage visible inside slices."""
+    if data.empty:
+        st.info(f"No data available for {title}.")
+        return
+
+    fig = px.pie(data, names=name_col, values=value_col, title=title, hole=0.35)
+    fig.update_traces(
+        textposition="inside",
+        textinfo="label+percent+value",
+        insidetextorientation="radial",
+        hovertemplate="%{label}<br>House visits: %{value:,}<br>Share: %{percent}<extra></extra>",
+    )
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=65, b=20),
+        title_x=0.02,
+        height=500,
+        showlegend=True,
+        paper_bgcolor="white",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_chart_box(title: str, description: str, chart_type: str, data: pd.DataFrame, x_col: str, y_col: str, orientation: str = "h"):
+    """Render one chart inside a bordered visual card for a stronger dashboard experience."""
+    with st.container(border=True):
+        st.markdown(f"#### {title}")
+        if description:
+            st.caption(description)
+        if chart_type == "pie":
+            render_labeled_pie_chart(data, x_col, y_col, title)
+        else:
+            render_labeled_bar_chart(data, x_col, y_col, title, orientation=orientation)
 
 def create_clean_summary(clean_dataset: pd.DataFrame):
     """Create clean-data house visit summaries for dashboard charts and Excel export."""
@@ -727,6 +778,60 @@ def create_excel_outputs(full_dataset, clean_dataset, duplicate_dataset, duplica
     return output_file
 
 
+def _pdf_bar_page(pdf: PdfPages, data: pd.DataFrame, category_col: str, value_col: str, title: str, max_rows: int = 20):
+    """Add one labeled horizontal bar chart page to the PDF report."""
+    plot_df = data.head(max_rows).sort_values(value_col, ascending=True)
+    fig_height = max(5.5, 0.35 * len(plot_df) + 2)
+    fig, ax = plt.subplots(figsize=(11.69, fig_height))
+    ax.barh(plot_df[category_col].astype(str), plot_df[value_col])
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=18)
+    ax.set_xlabel("House visits")
+    ax.spines[["top", "right"]].set_visible(False)
+    max_value = plot_df[value_col].max() if not plot_df.empty else 0
+    for i, value in enumerate(plot_df[value_col]):
+        label_x = value * 0.98 if value > 0 else 0
+        ax.text(label_x, i, f"{int(value):,}", va="center", ha="right", fontsize=9)
+    ax.set_xlim(0, max_value * 1.12 if max_value else 1)
+    fig.tight_layout()
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _pdf_pie_page(pdf: PdfPages, data: pd.DataFrame, name_col: str, value_col: str, title: str):
+    """Add one pie chart page with label and percentage to the PDF report."""
+    fig, ax = plt.subplots(figsize=(11.69, 8.27))
+    labels = data[name_col].astype(str).tolist()
+    values = data[value_col].tolist()
+    total = sum(values) if values else 0
+    pie_labels = [f"{label}\n{value:,} ({(value / total * 100):.1f}%)" if total else f"{label}\n{value:,}" for label, value in zip(labels, values)]
+    ax.pie(values, labels=pie_labels, autopct=None, startangle=90, textprops={"fontsize": 9})
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=18)
+    ax.axis("equal")
+    fig.tight_layout()
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def create_clean_summary_pdf(clean_summary_tables: dict) -> BytesIO:
+    """Create a PDF report containing all Clean Data Summary charts."""
+    pdf_buffer = BytesIO()
+    with PdfPages(pdf_buffer) as pdf:
+        _pdf_pie_page(
+            pdf,
+            clean_summary_tables["House_Visit_Type_Wise"],
+            "HOUSE VISIT TYPE",
+            "House Visits",
+            "House Visit Type-wise visits",
+        )
+        _pdf_bar_page(pdf, clean_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", "Region-wise house visits")
+        _pdf_bar_page(pdf, clean_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", "State-wise house visits")
+        _pdf_bar_page(pdf, clean_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", "Funder-wise house visits")
+        _pdf_bar_page(pdf, clean_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", "Top TMO-wise house visits")
+        _pdf_bar_page(pdf, clean_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", "Top YM-wise house visits")
+    pdf_buffer.seek(0)
+    return pdf_buffer
+
+
 def get_risk_label(rate: float) -> str:
     """Simple executive risk banding for rates."""
     if rate <= 20:
@@ -842,9 +947,11 @@ if uploaded:
                 repeated_remarks,
                 theme_summary,
             )
+            charts_pdf = create_clean_summary_pdf(clean_summary_tables)
 
             base_name = uploaded.name.rsplit(".", 1)[0]
             output_name = f"{base_name}_DQI_Intelligence_Output.xlsx"
+            charts_pdf_name = f"{base_name}_Clean_Data_Summary_Charts.pdf"
             zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -909,41 +1016,90 @@ if uploaded:
 
             with tab2:
                 st.subheader("Clean Data Summary After Deduplication")
-                st.caption("All charts below use Clean Unique House Visits only and include value labels.")
+                st.caption(
+                    "All charts below use Clean Unique House Visits only. Labels are displayed inside each chart. "
+                    "A PDF version of these charts is available in the Downloads tab."
+                )
+
+                render_chart_box(
+                    "1. House Visit Type-wise visits",
+                    "Distribution of clean house visits by HOUSE VISIT TYPE, such as regular, irregular, issue-based, or any other available category.",
+                    "pie",
+                    clean_summary_tables["House_Visit_Type_Wise"],
+                    "HOUSE VISIT TYPE",
+                    "House Visits",
+                )
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    render_labeled_bar_chart(clean_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", "Region-wise house visits", orientation="v")
+                    render_chart_box(
+                        "2. Region-wise house visits",
+                        "Clean unique house visits by region.",
+                        "bar",
+                        clean_summary_tables["Region_Wise_House_Visits"],
+                        "REGION",
+                        "House Visits",
+                        orientation="v",
+                    )
                 with c2:
-                    render_labeled_bar_chart(clean_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", "State-wise house visits", orientation="h")
+                    render_chart_box(
+                        "3. State-wise house visits",
+                        "Clean unique house visits by state.",
+                        "bar",
+                        clean_summary_tables["State_Wise_House_Visits"],
+                        "STATE",
+                        "House Visits",
+                        orientation="h",
+                    )
 
                 c3, c4 = st.columns(2)
                 with c3:
-                    render_labeled_bar_chart(clean_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", "Funder-wise house visits", orientation="h")
+                    render_chart_box(
+                        "4. Funder-wise house visits",
+                        "Clean unique house visits by funder.",
+                        "bar",
+                        clean_summary_tables["Funder_Wise_House_Visits"],
+                        "Funder",
+                        "House Visits",
+                        orientation="h",
+                    )
                 with c4:
-                    render_labeled_bar_chart(clean_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", "Top TMO-wise house visits", orientation="h")
+                    render_chart_box(
+                        "5. TMO-wise house visits",
+                        "Top TMO-wise house visit volume after deduplication.",
+                        "bar",
+                        clean_summary_tables["TMO_Wise_House_Visits"],
+                        "TMO Name",
+                        "House Visits",
+                        orientation="h",
+                    )
 
-                st.markdown("### Top YM-wise house visits")
-                render_labeled_bar_chart(clean_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", "Top YM-wise house visits", orientation="h")
-
-                st.markdown("### House Visit Type-wise visits")
-                st.caption("This chart shows whether house visits are regular, irregular, issue-based, or any other type available in the HOUSE VISIT TYPE field.")
-                render_labeled_bar_chart(clean_summary_tables["House_Visit_Type_Wise"], "HOUSE VISIT TYPE", "House Visits", "House Visit Type-wise house visits", orientation="h")
+                render_chart_box(
+                    "6. YM-wise house visits",
+                    "Top YM-wise house visit volume after deduplication.",
+                    "bar",
+                    clean_summary_tables["YM_Wise_House_Visits"],
+                    "YM Name",
+                    "House Visits",
+                    orientation="h",
+                )
 
                 st.markdown("### Summary Tables")
-                table_tab1, table_tab2, table_tab3, table_tab4, table_tab5, table_tab6 = st.tabs(["Region", "State", "Funder", "TMO", "YM", "House Visit Type"])
+                table_tab1, table_tab2, table_tab3, table_tab4, table_tab5, table_tab6 = st.tabs([
+                    "House Visit Type", "Region", "State", "Funder", "TMO", "YM"
+                ])
                 with table_tab1:
-                    st.dataframe(clean_summary_tables["Region_Wise_House_Visits"], use_container_width=True, hide_index=True)
-                with table_tab2:
-                    st.dataframe(clean_summary_tables["State_Wise_House_Visits"], use_container_width=True, hide_index=True)
-                with table_tab3:
-                    st.dataframe(clean_summary_tables["Funder_Wise_House_Visits"], use_container_width=True, hide_index=True)
-                with table_tab4:
-                    st.dataframe(clean_summary_tables["TMO_Wise_House_Visits"], use_container_width=True, hide_index=True)
-                with table_tab5:
-                    st.dataframe(clean_summary_tables["YM_Wise_House_Visits"], use_container_width=True, hide_index=True)
-                with table_tab6:
                     st.dataframe(clean_summary_tables["House_Visit_Type_Wise"], use_container_width=True, hide_index=True)
+                with table_tab2:
+                    st.dataframe(clean_summary_tables["Region_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab3:
+                    st.dataframe(clean_summary_tables["State_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab4:
+                    st.dataframe(clean_summary_tables["Funder_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab5:
+                    st.dataframe(clean_summary_tables["TMO_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab6:
+                    st.dataframe(clean_summary_tables["YM_Wise_House_Visits"], use_container_width=True, hide_index=True)
 
             with tab3:
                 st.subheader("Duplicate Intelligence")
@@ -1061,9 +1217,17 @@ if uploaded:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
+                st.download_button(
+                    "Download Clean Data Summary Charts PDF",
+                    data=charts_pdf.getvalue(),
+                    file_name=charts_pdf_name,
+                    mime="application/pdf",
+                )
+
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     zf.writestr(output_name, output_xlsx.getvalue())
+                    zf.writestr(charts_pdf_name, charts_pdf.getvalue())
                 zip_buffer.seek(0)
 
                 st.download_button(
@@ -1072,6 +1236,9 @@ if uploaded:
                     file_name=zip_name,
                     mime="application/zip",
                 )
+
+                st.markdown("### Files included")
+                st.write("The ZIP bundle includes the complete Excel workbook and a PDF of all Clean Data Summary charts.")
 
                 st.markdown("### Excel sheets included")
                 st.write(
