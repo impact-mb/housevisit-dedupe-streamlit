@@ -1,13 +1,52 @@
+"""
+House Visit Data Quality Intelligence Platform (DQI)
+===================================================
 
-import streamlit as st
-import pandas as pd
+Purpose
+-------
+This Streamlit application helps Magic Bus data / M&E teams assess House Visit data quality.
+
+Core modules
+------------
+1. Secure login layer using Streamlit secrets.
+2. Duplicate detection using the agreed business key:
+   PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE
+3. Clean unique dataset generation after duplicate removal.
+4. CXO-friendly executive dashboard with clear denominators and percentage metrics.
+5. Clean-data summary charts after data cleaning:
+   - Region-wise house visits
+   - State-wise house visits
+   - Funder-wise house visits
+   - TMO-wise house visits
+   - YM-wise house visits
+6. Remarks intelligence using clean unique data only:
+   - Same remark repeated flag
+   - Copy-paste score
+   - Template detection
+   - Possible AI / prompt-copy detection
+   - Theme classification
+7. Excel export with all row-level and summary outputs.
+
+Deployment notes
+----------------
+This app is designed for free Streamlit Cloud deployment using open-source packages:
+streamlit, pandas, openpyxl, plotly.
+
+Do not hard-code production passwords in this file. Use .streamlit/secrets.toml locally
+and Streamlit Cloud secrets online.
+"""
+
 import base64
-from io import BytesIO
-import zipfile
-from pathlib import Path
-from datetime import datetime
 import re
-from difflib import SequenceMatcher
+import zipfile
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
 
 # ============================================================
 # APP CONFIG
@@ -15,47 +54,51 @@ from difflib import SequenceMatcher
 st.set_page_config(
     page_title="House Visit Data Quality Intelligence Platform (DQI)",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 
 # ============================================================
-# LOGIN CONFIG - USE STREAMLIT SECRETS FOR WEB DEPLOYMENT
+# LOGIN CONFIG - STREAMLIT SECRETS BASED
 # ============================================================
 def get_login_credentials():
     """
-    Reads login credentials from Streamlit secrets.
-    For Streamlit Cloud, add these secrets in App settings:
+    Read login credentials from Streamlit secrets.
+
+    Local setup:
+    .streamlit/secrets.toml
 
     [auth]
     username = "north_admin"
     password = "Magic@1234"
+
+    Streamlit Cloud setup:
+    App > Settings > Secrets, then paste the same TOML block.
     """
     try:
-        username = st.secrets["auth"]["username"]
-        password = st.secrets["auth"]["password"]
-        return username, password
+        return st.secrets["auth"]["username"], st.secrets["auth"]["password"]
     except Exception:
         return None, None
 
 
 def render_login_page():
+    """Render a simple secure access layer before the main app loads."""
     st.markdown(
         """
         <style>
-            .login-title {
+            .login-page-title {
                 text-align: center;
-                font-size: 30px;
-                font-weight: 800;
+                font-size: 34px;
+                font-weight: 850;
                 color: #1f2937;
-                margin-top: 40px;
-                margin-bottom: 5px;
+                margin-top: 48px;
+                margin-bottom: 4px;
             }
-            .login-subtitle {
+            .login-page-subtitle {
                 text-align: center;
                 font-size: 15px;
                 color: #6b7280;
-                margin-bottom: 28px;
+                margin-bottom: 30px;
             }
             .login-warning {
                 background: #fff7e6;
@@ -69,8 +112,14 @@ def render_login_page():
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="login-title">House Visit Data Quality Intelligence Platform (DQI)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">Secure Access Layer</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="login-page-title">House Visit Data Quality Intelligence Platform (DQI)</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="login-page-subtitle">Secure access for internal data quality review</div>',
+        unsafe_allow_html=True,
+    )
 
     expected_username, expected_password = get_login_credentials()
 
@@ -79,14 +128,14 @@ def render_login_page():
             """
             <div class="login-warning">
                 <b>Login secrets are not configured.</b><br>
-                Add credentials in <code>.streamlit/secrets.toml</code> for local use or in Streamlit Cloud secrets for web deployment.
+                Add credentials in <code>.streamlit/secrets.toml</code> locally or in Streamlit Cloud secrets online.
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.stop()
 
-    col_left, col_mid, col_right = st.columns([1, 1.2, 1])
+    col_left, col_mid, col_right = st.columns([1, 1.15, 1])
     with col_mid:
         with st.form("login_form"):
             username = st.text_input("Username")
@@ -108,19 +157,18 @@ if not st.session_state["authenticated"]:
     render_login_page()
     st.stop()
 
+
 # ============================================================
-# CSS - CXO FRIENDLY UI
+# CSS - CXO-FRIENDLY UI
 # ============================================================
 st.markdown(
     """
     <style>
-        .main {
-            background-color: #FAFAF7;
-        }
+        .main { background-color: #FAFAF7; }
         .center-title {
             text-align: center;
             font-size: 34px;
-            font-weight: 800;
+            font-weight: 850;
             color: #1f2937;
             margin-top: 4px;
             margin-bottom: 2px;
@@ -131,14 +179,6 @@ st.markdown(
             color: #4b5563;
             margin-bottom: 20px;
         }
-        .top-card {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            padding: 16px 18px;
-            box-shadow: 0px 2px 8px rgba(0,0,0,0.04);
-            min-height: 96px;
-        }
         .quote-card {
             background: #fff7e6;
             border-left: 6px solid #f59e0b;
@@ -147,6 +187,7 @@ st.markdown(
             color: #374151;
             font-size: 15px;
             min-height: 92px;
+            box-shadow: 0px 2px 8px rgba(0,0,0,0.03);
         }
         .date-card {
             background: #eef6ff;
@@ -157,6 +198,7 @@ st.markdown(
             font-size: 15px;
             min-height: 92px;
             text-align: right;
+            box-shadow: 0px 2px 8px rgba(0,0,0,0.03);
         }
         .section-card {
             background: #ffffff;
@@ -167,29 +209,22 @@ st.markdown(
             margin-bottom: 10px;
             box-shadow: 0px 2px 8px rgba(0,0,0,0.03);
         }
-        .metric-note {
-            font-size: 13px;
-            color: #6b7280;
-        }
-        .risk-good {
-            color: #047857;
-            font-weight: 700;
-        }
-        .risk-watch {
-            color: #b45309;
-            font-weight: 700;
-        }
-        .risk-high {
-            color: #b91c1c;
-            font-weight: 700;
+        .metric-note { font-size: 13px; color: #6b7280; }
+        .block-title {
+            font-size: 19px;
+            font-weight: 750;
+            color: #111827;
+            margin-top: 8px;
+            margin-bottom: 8px;
         }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
+
 # ============================================================
-# SCHEMA
+# SCHEMA AND BUSINESS RULES
 # ============================================================
 SCHEMA = {
     "Funder": "string",
@@ -214,7 +249,6 @@ SCHEMA = {
     "YM Name": "string",
 }
 
-# Duplicate key requested earlier
 DEDUPE_KEY_COLS = [
     "PROGRAM LAUNCH NAME",
     "ProjectType",
@@ -224,7 +258,6 @@ DEDUPE_KEY_COLS = [
     "HOUSE VISIT DATE",
 ]
 
-# Remarks context key requested by user
 REMARKS_CONTEXT_COLS = [
     "PROGRAM LAUNCH NAME",
     "Sub Type",
@@ -257,45 +290,21 @@ THEME_KEYWORDS = {
 }
 
 COMMON_TEMPLATE_OPENINGS = [
-    "we met",
-    "we discussed",
-    "met with parents",
-    "met with the parents",
-    "during the home visit",
-    "today we met",
-    "today, we met",
-    "explain about",
-    "explained about",
-    "discussed about",
-    "we explained",
-    "we meet",
+    "we met", "we discussed", "met with parents", "met with the parents",
+    "during the home visit", "today we met", "today, we met", "explain about",
+    "explained about", "discussed about", "we explained", "we meet",
 ]
 
 GENERIC_TEMPLATE_PHRASES = [
-    "overall development",
-    "importance of education",
-    "study corner and kitchen garden",
-    "kitchen garden and study corner",
-    "daily study plans",
-    "academic progress",
-    "magic bus program",
-    "life skills sessions",
-    "digital literacy sessions",
-    "parents were requested",
-    "parents actively participated",
-    "provided updates",
+    "overall development", "importance of education", "study corner and kitchen garden",
+    "kitchen garden and study corner", "daily study plans", "academic progress",
+    "magic bus program", "life skills sessions", "digital literacy sessions",
+    "parents were requested", "parents actively participated", "provided updates",
 ]
 
 AI_PROMPT_COPY_PHRASES = [
-    "here is an improved version",
-    "additional relevant line",
-    "as an ai",
-    "chatgpt",
-    "generated response",
-    "improved version",
-    "relevant line",
-    "draft",
-    "rewrite",
+    "here is an improved version", "additional relevant line", "as an ai", "chatgpt",
+    "generated response", "improved version", "relevant line", "draft", "rewrite",
 ]
 
 SPORTS_QUOTES = [
@@ -306,10 +315,12 @@ SPORTS_QUOTES = [
     "Consistency beats intensity when the season is long.",
 ]
 
+
 # ============================================================
-# HELPER FUNCTIONS
+# DATA CLEANING HELPERS
 # ============================================================
-def clickable_logo(img_path, link_url, width=130):
+def clickable_logo(img_path: str, link_url: str, width: int = 130):
+    """Render a clickable logo when the logo file exists."""
     try:
         img_bytes = Path(img_path).read_bytes()
         encoded = base64.b64encode(img_bytes).decode()
@@ -328,21 +339,17 @@ def clickable_logo(img_path, link_url, width=130):
 
 
 def remove_footer_and_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df = df.dropna(how="all")
-
+    """Remove empty rows and Power BI footer rows such as Applied filters."""
+    df = df.copy().dropna(how="all")
     footer_mask = df.apply(
-        lambda row: row.astype(str)
-        .str.contains("Applied filters", case=False, na=False)
-        .any(),
+        lambda row: row.astype(str).str.contains("Applied filters", case=False, na=False).any(),
         axis=1,
     )
-
-    df = df[~footer_mask]
-    return df.reset_index(drop=True)
+    return df[~footer_mask].reset_index(drop=True)
 
 
 def apply_schema_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize expected columns, dates, IDs, and text spacing."""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
@@ -352,11 +359,7 @@ def apply_schema_types(df: pd.DataFrame) -> pd.DataFrame:
             continue
 
         if dtype == "date":
-            df[col] = pd.to_datetime(
-                df[col],
-                errors="coerce",
-                dayfirst=True,
-            ).dt.date
+            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True).dt.date
         else:
             df[col] = (
                 df[col]
@@ -371,15 +374,16 @@ def apply_schema_types(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalize_text(text: str) -> str:
+    """Create a canonical text version for matching and rule-based analytics."""
     text = "" if pd.isna(text) else str(text)
-    text = text.lower()
-    text = text.replace("’", "'").replace("“", '"').replace("”", '"')
+    text = text.lower().replace("’", "'").replace("“", '"').replace("”", '"')
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
 def make_key(df: pd.DataFrame, cols: list) -> pd.Series:
+    """Concatenate selected columns into a stable business key."""
     parts = []
     for col in cols:
         if col == "HOUSE VISIT DATE":
@@ -392,32 +396,96 @@ def make_key(df: pd.DataFrame, cols: list) -> pd.Series:
     return key
 
 
+def pct(num: float, den: float) -> float:
+    """Safe percentage calculation."""
+    return round((num / den * 100), 1) if den else 0.0
+
+
+# ============================================================
+# CHART HELPERS
+# ============================================================
+def make_summary_table(df: pd.DataFrame, group_col: str, top_n: int = 20) -> pd.DataFrame:
+    """Create a house-visit count summary from clean unique data."""
+    if group_col not in df.columns:
+        return pd.DataFrame(columns=[group_col, "House Visits"])
+
+    out = (
+        df.groupby(group_col, dropna=False)
+        .size()
+        .reset_index(name="House Visits")
+        .sort_values("House Visits", ascending=False)
+        .head(top_n)
+    )
+    out[group_col] = out[group_col].replace("", "Not Available")
+    return out
+
+
+def render_labeled_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: str, orientation: str = "v"):
+    """Render a Plotly bar chart with value labels for CXO-friendly readability."""
+    if data.empty:
+        st.info(f"No data available for {title}.")
+        return
+
+    if orientation == "h":
+        plot_df = data.sort_values(y_col, ascending=True)
+        fig = px.bar(
+            plot_df,
+            x=y_col,
+            y=x_col,
+            orientation="h",
+            text=y_col,
+            title=title,
+        )
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(yaxis_title="", xaxis_title="House visits", height=max(420, 28 * len(plot_df)))
+    else:
+        fig = px.bar(data, x=x_col, y=y_col, text=y_col, title=title)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(xaxis_title="", yaxis_title="House visits", height=460)
+
+    fig.update_layout(
+        margin=dict(l=20, r=40, t=60, b=40),
+        title_x=0.02,
+        uniformtext_minsize=10,
+        uniformtext_mode="show",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def create_clean_summary(clean_dataset: pd.DataFrame):
+    """Create the five clean-data house visit summaries requested by the user."""
+    return {
+        "Region_Wise_House_Visits": make_summary_table(clean_dataset, "REGION", top_n=50),
+        "State_Wise_House_Visits": make_summary_table(clean_dataset, "STATE", top_n=50),
+        "Funder_Wise_House_Visits": make_summary_table(clean_dataset, "Funder", top_n=50),
+        "TMO_Wise_House_Visits": make_summary_table(clean_dataset, "TMO Name", top_n=30),
+        "YM_Wise_House_Visits": make_summary_table(clean_dataset, "YM Name", top_n=30),
+    }
+
+
+# ============================================================
+# REMARKS INTELLIGENCE HELPERS
+# ============================================================
 def detect_themes(text: str) -> str:
+    """Assign one or more themes to a remark based on keyword rules."""
     text_norm = normalize_text(text)
-    themes = []
-    for theme, keywords in THEME_KEYWORDS.items():
-        if any(k in text_norm for k in keywords):
-            themes.append(theme)
+    themes = [theme for theme, keywords in THEME_KEYWORDS.items() if any(k in text_norm for k in keywords)]
     return ", ".join(themes) if themes else "Unclassified"
 
 
 def count_themes(text: str) -> int:
     theme_string = detect_themes(text)
-    if theme_string == "Unclassified":
-        return 0
-    return len(theme_string.split(", "))
+    return 0 if theme_string == "Unclassified" else len(theme_string.split(", "))
 
 
 def detect_ai_prompt_copy(text: str) -> int:
+    """Flag clear copy-paste remnants from AI/prompt interfaces."""
     text_norm = normalize_text(text)
     return int(any(phrase in text_norm for phrase in AI_PROMPT_COPY_PHRASES))
 
 
 def template_detection(text: str) -> tuple:
-    """
-    Returns Template_Flag, Template_Score, Template_Reason.
-    This is rule-based and free/open-source friendly.
-    """
+    """Rule-based template detection using opening phrases, generic phrases, and theme density."""
     text_norm = normalize_text(text)
     if text_norm == "":
         return 0, 0, "Blank remark"
@@ -430,12 +498,11 @@ def template_detection(text: str) -> tuple:
         reasons.append("Common opening phrase")
 
     matched_generic = [p for p in GENERIC_TEMPLATE_PHRASES if p in text_norm]
-    if len(matched_generic) >= 1:
+    if matched_generic:
         score += 20
         reasons.append("Generic programme phrase")
 
-    themes_count = count_themes(text_norm)
-    if themes_count >= 3:
+    if count_themes(text_norm) >= 3:
         score += 15
         reasons.append("Multiple standard intervention keywords")
 
@@ -448,11 +515,11 @@ def template_detection(text: str) -> tuple:
         score += 40
         reasons.append("Possible AI/prompt copy phrase")
 
-    flag = int(score >= 40)
-    return flag, min(score, 100), " + ".join(reasons) if reasons else "No template signal"
+    return int(score >= 40), min(score, 100), " + ".join(reasons) if reasons else "No template signal"
 
 
 def remarks_quality_band(word_count: int, blank_flag: int, ai_flag: int, same_flag: int, template_flag: int) -> str:
+    """Create a row-level quality band for review prioritization."""
     if blank_flag == 1:
         return "Poor - Blank"
     if ai_flag == 1:
@@ -472,24 +539,21 @@ def remarks_quality_band(word_count: int, blank_flag: int, ai_flag: int, same_fl
     return "Detailed"
 
 
-def pct(num, den):
-    return round((num / den * 100), 1) if den else 0.0
-
-
 # ============================================================
 # DQI DUPLICATE PROCESSING
 # ============================================================
 def process_housevisit_dqi(df: pd.DataFrame):
+    """Clean input data, identify duplicates, and create full/clean/duplicate datasets."""
     df = remove_footer_and_blank_rows(df)
     df = apply_schema_types(df)
 
     df["DQI_DUPLICATE_KEY"] = make_key(df, DEDUPE_KEY_COLS)
-
     df["Duplicate_Order"] = df.groupby("DQI_DUPLICATE_KEY").cumcount()
     df["Duplicate_Group_Size"] = df.groupby("DQI_DUPLICATE_KEY")["DQI_DUPLICATE_KEY"].transform("count")
 
-    # 0 = Unique / first valid record
-    # 1 = Duplicate / repeated record
+    # Required dichotomous variable:
+    # Duplicate = 1 means duplicate/repeated record.
+    # Duplicate = 0 means unique/first record retained in clean data.
     df["Duplicate"] = (df["Duplicate_Order"] > 0).astype(int)
 
     full_dataset = df.copy()
@@ -513,43 +577,30 @@ def process_housevisit_dqi(df: pd.DataFrame):
 
 
 # ============================================================
-# REMARKS INTELLIGENCE
+# REMARKS INTELLIGENCE PROCESSING
 # ============================================================
 def create_remarks_intelligence(clean_dataset: pd.DataFrame):
     """
-    Important: Remarks intelligence is calculated on clean unique data only.
-    This avoids duplicate rows inflating copy-paste/template results.
+    Build remarks intelligence using clean unique data only.
+
+    This prevents duplicate records from inflating copy-paste or template scores.
     """
     df = clean_dataset.copy()
-
     df["REMARKS_CONTEXT_KEY"] = make_key(df, REMARKS_CONTEXT_COLS)
-
-    df["REMARKS_CLEAN"] = (
-        df["REMARKS"]
-        .fillna("")
-        .astype(str)
-        .str.replace(r"\s+", " ", regex=True)
-        .str.strip()
-    )
-
+    df["REMARKS_CLEAN"] = df["REMARKS"].fillna("").astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
     df["REMARKS_CANONICAL"] = df["REMARKS_CLEAN"].apply(normalize_text)
     df["Blank_Remark"] = df["REMARKS_CANONICAL"].apply(lambda x: 1 if x == "" or x in ["nan", "none"] else 0)
     df["Remarks_Word_Count"] = df["REMARKS_CANONICAL"].apply(lambda x: len(x.split()) if x else 0)
 
-    # Same remark repeated: exact same canonical remark reused by the same TMO/YM/program/visit-type context.
     same_remark_group = REMARK_REUSE_GROUP_COLS + ["REMARKS_CANONICAL"]
     df["Same_Remark_Group_Size"] = df.groupby(same_remark_group, dropna=False)["REMARKS_CANONICAL"].transform("count")
     df["Same_Remark_Repeated"] = ((df["Same_Remark_Group_Size"] > 1) & (df["Blank_Remark"] == 0)).astype(int)
 
-    # Template detection
     template_results = df["REMARKS_CLEAN"].apply(template_detection)
     df["Template_Flag"] = template_results.apply(lambda x: x[0])
     df["Template_Score"] = template_results.apply(lambda x: x[1])
     df["Template_Reason"] = template_results.apply(lambda x: x[2])
-
     df["Possible_AI_Prompt_Copy"] = df["REMARKS_CLEAN"].apply(detect_ai_prompt_copy)
-
-    # Theme tagging
     df["Remarks_Themes"] = df["REMARKS_CLEAN"].apply(detect_themes)
     df["Theme_Count"] = df["REMARKS_CLEAN"].apply(count_themes)
 
@@ -564,9 +615,7 @@ def create_remarks_intelligence(clean_dataset: pd.DataFrame):
         axis=1,
     )
 
-    # Executive-level summaries
     group_cols = ["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type"]
-
     remarks_summary = (
         df.groupby(group_cols, dropna=False)
         .agg(
@@ -581,19 +630,11 @@ def create_remarks_intelligence(clean_dataset: pd.DataFrame):
         )
         .reset_index()
     )
-
-    remarks_summary["Same_Remark_Repeated_%"] = remarks_summary.apply(
-        lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1
-    )
-    remarks_summary["Template_Flag_%"] = remarks_summary.apply(
-        lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1
-    )
-    remarks_summary["Blank_Remark_%"] = remarks_summary.apply(
-        lambda r: pct(r["Blank_Remarks"], r["Clean_Unique_Records"]), axis=1
-    )
+    remarks_summary["Same_Remark_Repeated_%"] = remarks_summary.apply(lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1)
+    remarks_summary["Template_Flag_%"] = remarks_summary.apply(lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1)
+    remarks_summary["Blank_Remark_%"] = remarks_summary.apply(lambda r: pct(r["Blank_Remarks"], r["Clean_Unique_Records"]), axis=1)
     remarks_summary["Avg_Remarks_Word_Count"] = remarks_summary["Avg_Remarks_Word_Count"].round(1)
 
-    # Leaderboard by YM
     ym_summary = (
         df.groupby(["REGION", "STATE", "DISTRICT", "TMO Name", "YM Name"], dropna=False)
         .agg(
@@ -608,16 +649,11 @@ def create_remarks_intelligence(clean_dataset: pd.DataFrame):
         )
         .reset_index()
     )
-    ym_summary["Copy_Paste_Score_%"] = ym_summary.apply(
-        lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1
-    )
-    ym_summary["Template_Score_%"] = ym_summary.apply(
-        lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1
-    )
+    ym_summary["Copy_Paste_Score_%"] = ym_summary.apply(lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1)
+    ym_summary["Template_Score_%"] = ym_summary.apply(lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1)
     ym_summary["Avg_Word_Count"] = ym_summary["Avg_Word_Count"].round(1)
     ym_summary = ym_summary.sort_values(["Copy_Paste_Score_%", "Template_Score_%"], ascending=False)
 
-    # Top repeated remarks
     repeated_remarks = (
         df[df["Blank_Remark"] == 0]
         .groupby(REMARK_REUSE_GROUP_COLS + ["REMARKS_CLEAN"], dropna=False)
@@ -632,7 +668,6 @@ def create_remarks_intelligence(clean_dataset: pd.DataFrame):
         .sort_values("Reuse_Count", ascending=False)
     )
 
-    # Theme summary
     theme_rows = []
     for _, row in df.iterrows():
         themes = row["Remarks_Themes"].split(", ") if row["Remarks_Themes"] != "Unclassified" else ["Unclassified"]
@@ -665,24 +700,31 @@ def create_remarks_intelligence(clean_dataset: pd.DataFrame):
 # EXCEL EXPORT
 # ============================================================
 def create_excel_outputs(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
-                         remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary):
+                         clean_summary_tables, remarks_dataset, remarks_summary, ym_summary,
+                         repeated_remarks, theme_summary):
+    """Create a multi-sheet Excel workbook for download."""
     output_file = BytesIO()
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         full_dataset.to_excel(writer, index=False, sheet_name="01_Full_Data_Duplicate_Flag")
         clean_dataset.to_excel(writer, index=False, sheet_name="02_Clean_Unique_Data")
         duplicate_dataset.to_excel(writer, index=False, sheet_name="03_Duplicate_Only")
         duplicate_summary.to_excel(writer, index=False, sheet_name="04_Duplicate_Summary")
-        remarks_dataset.to_excel(writer, index=False, sheet_name="05_Remarks_Row_Level")
-        remarks_summary.to_excel(writer, index=False, sheet_name="06_Remarks_Summary")
-        ym_summary.to_excel(writer, index=False, sheet_name="07_YM_Leaderboard")
-        repeated_remarks.to_excel(writer, index=False, sheet_name="08_Repeated_Remarks")
-        theme_summary.to_excel(writer, index=False, sheet_name="09_Theme_Summary")
-
+        clean_summary_tables["Region_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="05_Region_Summary")
+        clean_summary_tables["State_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="06_State_Summary")
+        clean_summary_tables["Funder_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="07_Funder_Summary")
+        clean_summary_tables["TMO_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="08_TMO_Summary")
+        clean_summary_tables["YM_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="09_YM_Summary")
+        remarks_dataset.to_excel(writer, index=False, sheet_name="10_Remarks_Row_Level")
+        remarks_summary.to_excel(writer, index=False, sheet_name="11_Remarks_Summary")
+        ym_summary.to_excel(writer, index=False, sheet_name="12_YM_Leaderboard")
+        repeated_remarks.to_excel(writer, index=False, sheet_name="13_Repeated_Remarks")
+        theme_summary.to_excel(writer, index=False, sheet_name="14_Theme_Summary")
     output_file.seek(0)
     return output_file
 
 
-def get_risk_label(rate):
+def get_risk_label(rate: float) -> str:
+    """Simple executive risk banding for rates."""
     if rate <= 20:
         return "Low"
     if rate <= 50:
@@ -706,8 +748,8 @@ quote = SPORTS_QUOTES[datetime.now().day % len(SPORTS_QUOTES)]
 
 st.markdown('<div class="center-title">House Visit Data Quality Intelligence Platform (DQI)</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="center-subtitle">Duplicate Detection • Remarks Intelligence • Copy-Paste Review • Template Detection • Field Data Quality</div>',
-    unsafe_allow_html=True
+    '<div class="center-subtitle">Duplicate Detection • Clean Data Summary • Remarks Intelligence • Template Detection • Field Data Quality</div>',
+    unsafe_allow_html=True,
 )
 
 left, right = st.columns([2, 1])
@@ -719,7 +761,7 @@ with left:
             “{quote}”
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 with right:
     st.markdown(
@@ -730,25 +772,23 @@ with right:
             <span class="metric-note">System date from deployment server</span>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 st.markdown("---")
-
 st.markdown(
     """
     <div class="section-card">
-    <b>How to read the DQI dashboard:</b><br>
-    Duplicate records are removed first. Remarks intelligence is then calculated only on the <b>Clean Unique Dataset</b>.
-    Therefore, Same Remark Repeated, Template Flag, Blank Remarks, and AI/Prompt Copy are quality flags within the clean data.
-    These flags can overlap, so they should not be added together.
+    <b>How to read this dashboard:</b><br>
+    Duplicate records are identified first and removed from the clean dataset. Clean-data summaries and remarks intelligence are calculated only on the <b>Clean Unique Dataset</b>. Same Remark Repeated, Template-like Remarks, AI/Prompt Copy, and Blank Remarks are overlapping quality flags and should not be added together.
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
+
 # ============================================================
-# UPLOAD
+# UPLOAD AND RUN
 # ============================================================
 uploaded = st.file_uploader(
     "Upload House Visit Data File (.xlsx, .xls, .xlsm, .csv)",
@@ -761,13 +801,13 @@ if uploaded:
     if st.button("Run DQI Analysis", type="primary"):
         try:
             file_name = uploaded.name.lower()
-
             if file_name.endswith(".csv"):
-                df = pd.read_csv(uploaded)
+                raw_df = pd.read_csv(uploaded)
             else:
-                df = pd.read_excel(uploaded)
+                raw_df = pd.read_excel(uploaded)
 
-            full_dataset, clean_dataset, duplicate_dataset, duplicate_summary = process_housevisit_dqi(df)
+            full_dataset, clean_dataset, duplicate_dataset, duplicate_summary = process_housevisit_dqi(raw_df)
+            clean_summary_tables = create_clean_summary(clean_dataset)
             remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary = create_remarks_intelligence(clean_dataset)
 
             total_records = len(full_dataset)
@@ -785,46 +825,51 @@ if uploaded:
             blank_rate = pct(blank_remarks_count, clean_records)
             ai_rate = pct(ai_prompt_count, clean_records)
 
+            output_xlsx = create_excel_outputs(
+                full_dataset,
+                clean_dataset,
+                duplicate_dataset,
+                duplicate_summary,
+                clean_summary_tables,
+                remarks_dataset,
+                remarks_summary,
+                ym_summary,
+                repeated_remarks,
+                theme_summary,
+            )
+
             base_name = uploaded.name.rsplit(".", 1)[0]
             output_name = f"{base_name}_DQI_Intelligence_Output.xlsx"
             zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
-            output_xlsx = create_excel_outputs(
-                full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
-                remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary
-            )
-
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "Executive Summary",
+                "Clean Data Summary",
                 "Duplicate Intelligence",
                 "Remarks Intelligence",
-                "Downloads"
+                "Downloads",
             ])
 
             with tab1:
                 st.subheader("CXO Summary")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Total Records Uploaded", f"{total_records:,}")
+                k2.metric("Clean Unique House Visits", f"{clean_records:,}")
+                k3.metric("Duplicate Records Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
+                k4.metric("Remarks Quality Base", f"{clean_records:,}", "Clean data only")
 
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Total Records Uploaded", f"{total_records:,}")
-                col2.metric("Clean Unique Records", f"{clean_records:,}")
-                col3.metric("Duplicate Records Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
-                col4.metric("Remarks Quality Base", f"{clean_records:,}", "Clean data only")
-
-                col5, col6, col7, col8 = st.columns(4)
-                col5.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}% of clean")
-                col6.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}% of clean")
-                col7.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}% of clean")
-                col8.metric("Blank Remarks", f"{blank_remarks_count:,}", f"{blank_rate}% of clean")
+                k5, k6, k7, k8 = st.columns(4)
+                k5.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}% of clean")
+                k6.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}% of clean")
+                k7.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}% of clean")
+                k8.metric("Blank Remarks", f"{blank_remarks_count:,}", f"{blank_rate}% of clean")
 
                 st.info(
-                    "Important: Same Remark Repeated and Template-like Remarks are overlapping quality flags. "
-                    "A single clean record can be counted in both categories."
+                    "Clean Unique House Visits is the base for all summary charts. Remarks flags can overlap, so the counts will not add up to clean records."
                 )
 
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    st.markdown("### Quality Risk Snapshot")
+                r1, r2 = st.columns([1, 1])
+                with r1:
                     risk_df = pd.DataFrame({
                         "Indicator": [
                             "Duplicate Rate",
@@ -833,52 +878,69 @@ if uploaded:
                             "Possible AI/Prompt Copy Rate",
                             "Blank Remark Rate",
                         ],
-                        "Rate %": [
-                            duplicate_rate,
-                            same_remark_rate,
-                            template_rate,
-                            ai_rate,
-                            blank_rate,
-                        ],
+                        "Rate %": [duplicate_rate, same_remark_rate, template_rate, ai_rate, blank_rate],
                         "Risk": [
                             get_risk_label(duplicate_rate),
                             get_risk_label(same_remark_rate),
                             get_risk_label(template_rate),
                             get_risk_label(ai_rate),
                             get_risk_label(blank_rate),
-                        ]
+                        ],
                     })
+                    st.markdown("### Quality Risk Snapshot")
                     st.dataframe(risk_df, use_container_width=True, hide_index=True)
 
-                with c2:
-                    st.markdown("### Theme Distribution")
+                with r2:
+                    st.markdown("### Top Themes")
                     if not theme_summary.empty:
-                        theme_chart = (
-                            theme_summary.groupby("Theme", as_index=False)["Records"].sum()
-                            .sort_values("Records", ascending=False)
-                            .head(10)
-                        )
-                        st.bar_chart(theme_chart.set_index("Theme"))
+                        theme_chart = theme_summary.groupby("Theme", as_index=False)["Records"].sum().sort_values("Records", ascending=False).head(10)
+                        render_labeled_bar_chart(theme_chart, "Theme", "Records", "Top 10 themes from clean remarks", orientation="h")
                     else:
                         st.write("No theme data available.")
 
                 st.markdown("### Top YM / TMO Quality Review")
-                st.dataframe(
-                    ym_summary.head(20),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(ym_summary.head(20), use_container_width=True, hide_index=True)
 
             with tab2:
-                st.subheader("Duplicate Intelligence")
-                st.caption(
-                    "Duplicate logic: PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE"
-                )
+                st.subheader("Clean Data Summary After Deduplication")
+                st.caption("All charts below use Clean Unique House Visits only and include value labels.")
 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Total Records", f"{total_records:,}")
-                col2.metric("Clean Unique Records", f"{clean_records:,}")
-                col3.metric("Duplicate Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
+                c1, c2 = st.columns(2)
+                with c1:
+                    render_labeled_bar_chart(clean_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", "Region-wise house visits", orientation="v")
+                with c2:
+                    render_labeled_bar_chart(clean_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", "State-wise house visits", orientation="h")
+
+                c3, c4 = st.columns(2)
+                with c3:
+                    render_labeled_bar_chart(clean_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", "Funder-wise house visits", orientation="h")
+                with c4:
+                    render_labeled_bar_chart(clean_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", "Top TMO-wise house visits", orientation="h")
+
+                st.markdown("### Top YM-wise house visits")
+                render_labeled_bar_chart(clean_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", "Top YM-wise house visits", orientation="h")
+
+                st.markdown("### Summary Tables")
+                table_tab1, table_tab2, table_tab3, table_tab4, table_tab5 = st.tabs(["Region", "State", "Funder", "TMO", "YM"])
+                with table_tab1:
+                    st.dataframe(clean_summary_tables["Region_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab2:
+                    st.dataframe(clean_summary_tables["State_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab3:
+                    st.dataframe(clean_summary_tables["Funder_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab4:
+                    st.dataframe(clean_summary_tables["TMO_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab5:
+                    st.dataframe(clean_summary_tables["YM_Wise_House_Visits"], use_container_width=True, hide_index=True)
+
+            with tab3:
+                st.subheader("Duplicate Intelligence")
+                st.caption("Duplicate logic: PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE")
+
+                d1, d2, d3 = st.columns(3)
+                d1.metric("Total Records", f"{total_records:,}")
+                d2.metric("Clean Unique Records", f"{clean_records:,}")
+                d3.metric("Duplicate Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
 
                 st.markdown("### Duplicate Summary")
                 st.dataframe(duplicate_summary.head(200), use_container_width=True, hide_index=True)
@@ -886,17 +948,15 @@ if uploaded:
                 st.markdown("### Full Dataset with Duplicate Flag")
                 st.dataframe(full_dataset.head(200), use_container_width=True, hide_index=True)
 
-            with tab3:
+            with tab4:
                 st.subheader("Remarks Intelligence")
-                st.caption(
-                    "Remarks intelligence is calculated on clean unique data only to avoid duplicate inflation."
-                )
+                st.caption("Remarks intelligence is calculated on clean unique data only to avoid duplicate inflation.")
 
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Clean Records Analysed", f"{clean_records:,}")
-                c2.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}%")
-                c3.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}%")
-                c4.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}%")
+                q1, q2, q3, q4 = st.columns(4)
+                q1.metric("Clean Records Analysed", f"{clean_records:,}")
+                q2.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}%")
+                q3.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}%")
+                q4.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}%")
 
                 st.markdown("### Remarks Summary by Geography / Program")
                 st.dataframe(remarks_summary.head(200), use_container_width=True, hide_index=True)
@@ -907,24 +967,17 @@ if uploaded:
                 st.markdown("### Theme Summary")
                 st.dataframe(theme_summary.head(200), use_container_width=True, hide_index=True)
 
-                st.markdown("### Row Level Remarks Intelligence")
-                st.dataframe(
-                    remarks_dataset[
-                        [
-                            "REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type",
-                            "TMO Name", "YM Name", "CHILD ID", "HOUSE VISIT DATE",
-                            "REMARKS", "Same_Remark_Repeated", "Template_Flag",
-                            "Template_Score", "Template_Reason", "Possible_AI_Prompt_Copy",
-                            "Remarks_Themes", "Remarks_Word_Count", "Remarks_Quality_Band"
-                        ]
-                    ].head(300),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.markdown("### Row-level Remarks Intelligence")
+                row_cols = [
+                    "REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type",
+                    "TMO Name", "YM Name", "CHILD ID", "HOUSE VISIT DATE", "REMARKS",
+                    "Same_Remark_Repeated", "Template_Flag", "Template_Score", "Template_Reason",
+                    "Possible_AI_Prompt_Copy", "Remarks_Themes", "Remarks_Word_Count", "Remarks_Quality_Band",
+                ]
+                st.dataframe(remarks_dataset[row_cols].head(300), use_container_width=True, hide_index=True)
 
-            with tab4:
+            with tab5:
                 st.subheader("Download Reports")
-
                 st.download_button(
                     "Download Complete DQI Intelligence Excel",
                     data=output_xlsx.getvalue(),
@@ -935,7 +988,6 @@ if uploaded:
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     zf.writestr(output_name, output_xlsx.getvalue())
-
                 zip_buffer.seek(0)
 
                 st.download_button(
@@ -945,18 +997,23 @@ if uploaded:
                     mime="application/zip",
                 )
 
-                st.markdown("### Excel Sheets Included")
+                st.markdown("### Excel sheets included")
                 st.write(
                     """
                     01_Full_Data_Duplicate_Flag  
                     02_Clean_Unique_Data  
                     03_Duplicate_Only  
                     04_Duplicate_Summary  
-                    05_Remarks_Row_Level  
-                    06_Remarks_Summary  
-                    07_YM_Leaderboard  
-                    08_Repeated_Remarks  
-                    09_Theme_Summary  
+                    05_Region_Summary  
+                    06_State_Summary  
+                    07_Funder_Summary  
+                    08_TMO_Summary  
+                    09_YM_Summary  
+                    10_Remarks_Row_Level  
+                    11_Remarks_Summary  
+                    12_YM_Leaderboard  
+                    13_Repeated_Remarks  
+                    14_Theme_Summary
                     """
                 )
 
@@ -967,9 +1024,9 @@ else:
         """
         <div class="section-card">
         <b>Upload a House Visit file to begin.</b><br>
-        The app is designed for free Streamlit Cloud deployment and uses only open-source Python libraries:
-        <code>streamlit</code>, <code>pandas</code>, and <code>openpyxl</code>.
+        This app is designed for free Streamlit Cloud deployment and uses only open-source Python libraries:
+        <code>streamlit</code>, <code>pandas</code>, <code>openpyxl</code>, and <code>plotly</code>.
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )

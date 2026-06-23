@@ -11,6 +11,9 @@ pandas>=2.0.0
 # Excel read/write (used by pandas for .xlsx)
 openpyxl>=3.1.0
 
+# Interactive data visualization
+plotly
+
 
 ##############################
 # Optional but recommended
