@@ -1,16 +1,106 @@
+
 import streamlit as st
 import pandas as pd
 import base64
 from io import BytesIO
 import zipfile
 from pathlib import Path
+from datetime import datetime
 import re
+from difflib import SequenceMatcher
 
+# ============================================================
+# APP CONFIG
+# ============================================================
 st.set_page_config(
     page_title="House Visit Data Quality Intelligence Platform (DQI)",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
+# ============================================================
+# CSS - CXO FRIENDLY UI
+# ============================================================
+st.markdown(
+    """
+    <style>
+        .main {
+            background-color: #FAFAF7;
+        }
+        .center-title {
+            text-align: center;
+            font-size: 34px;
+            font-weight: 800;
+            color: #1f2937;
+            margin-top: 4px;
+            margin-bottom: 2px;
+        }
+        .center-subtitle {
+            text-align: center;
+            font-size: 15px;
+            color: #4b5563;
+            margin-bottom: 20px;
+        }
+        .top-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 16px 18px;
+            box-shadow: 0px 2px 8px rgba(0,0,0,0.04);
+            min-height: 96px;
+        }
+        .quote-card {
+            background: #fff7e6;
+            border-left: 6px solid #f59e0b;
+            border-radius: 14px;
+            padding: 15px 18px;
+            color: #374151;
+            font-size: 15px;
+            min-height: 92px;
+        }
+        .date-card {
+            background: #eef6ff;
+            border-left: 6px solid #2563eb;
+            border-radius: 14px;
+            padding: 15px 18px;
+            color: #1f2937;
+            font-size: 15px;
+            min-height: 92px;
+            text-align: right;
+        }
+        .section-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 18px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0px 2px 8px rgba(0,0,0,0.03);
+        }
+        .metric-note {
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .risk-good {
+            color: #047857;
+            font-weight: 700;
+        }
+        .risk-watch {
+            color: #b45309;
+            font-weight: 700;
+        }
+        .risk-high {
+            color: #b91c1c;
+            font-weight: 700;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ============================================================
+# SCHEMA
+# ============================================================
 SCHEMA = {
     "Funder": "string",
     "COUNTRY": "string",
@@ -34,6 +124,7 @@ SCHEMA = {
     "YM Name": "string",
 }
 
+# Duplicate key requested earlier
 DEDUPE_KEY_COLS = [
     "PROGRAM LAUNCH NAME",
     "ProjectType",
@@ -43,7 +134,8 @@ DEDUPE_KEY_COLS = [
     "HOUSE VISIT DATE",
 ]
 
-REMARKS_CONTEXT_KEY_COLS = [
+# Remarks context key requested by user
+REMARKS_CONTEXT_COLS = [
     "PROGRAM LAUNCH NAME",
     "Sub Type",
     "HOUSE VISIT TYPE",
@@ -53,32 +145,81 @@ REMARKS_CONTEXT_KEY_COLS = [
     "HOUSE VISIT DATE",
 ]
 
+REMARK_REUSE_GROUP_COLS = [
+    "PROGRAM LAUNCH NAME",
+    "Sub Type",
+    "HOUSE VISIT TYPE",
+    "TMO Name",
+    "YM Name",
+]
+
 THEME_KEYWORDS = {
-    "Education / Study": ["study", "education", "academic", "exam", "exms", "10th", "class", "timetable", "school", "homework", "learning"],
-    "Kitchen Garden": ["kitchen garden", "kichen garden", "garden"],
-    "Study Corner": ["study corner", "study corners"],
+    "Education / Study": ["education", "study", "studies", "academic", "timetable", "homework", "school", "learning"],
+    "Exam Readiness": ["exam", "exams", "final exam", "10th", "ssc", "preparation"],
+    "Study Corner": ["study corner", "studycorner"],
+    "Kitchen Garden": ["kitchen garden", "kitchen", "garden", "kicthen"],
     "Life Skills": ["life skill", "life skills", "communication", "leadership", "critical thinking"],
-    "Digital Literacy": ["digital", "computer", "online", "technology"],
-    "Career Awareness": ["career", "career awareness", "job", "future"],
-    "Parent Engagement": ["parent", "parents", "mother", "father", "guardian", "parents meeting", "parent meeting"],
-    "Health / Wellbeing": ["health", "discipline", "hygiene", "wellbeing", "well-being"],
-    "Program Awareness": ["magic bus", "magicbus", "program", "programme", "sessions"],
+    "Digital Literacy": ["digital", "computer", "technology", "ai", "artificial intelligence"],
+    "Career Awareness": ["career", "job", "future", "aspiration"],
+    "Parent Engagement": ["parent", "parents", "mother", "father", "guardian", "parents meeting"],
+    "Health / Wellbeing": ["health", "discipline", "hygiene", "wellbeing", "nutrition"],
+    "Program Awareness": ["magic bus", "magicbus", "program", "programme", "three-year journey"],
 }
 
-COMMON_TEMPLATE_PHRASES = [
-    "we met", "we meet", "met with parents", "met with the parents",
-    "during the home visit", "today we met", "we discussed", "discussed about",
-    "explain about", "explained about", "we explained", "parents were requested",
-    "we highlighted", "we also explained"
+COMMON_TEMPLATE_OPENINGS = [
+    "we met",
+    "we discussed",
+    "met with parents",
+    "met with the parents",
+    "during the home visit",
+    "today we met",
+    "today, we met",
+    "explain about",
+    "explained about",
+    "discussed about",
+    "we explained",
+    "we meet",
 ]
 
-AI_SUSPICIOUS_PHRASES = [
-    "here is an improved version", "additional relevant line", "improved version",
-    "overall development", "actively participated", "expected outcomes"
+GENERIC_TEMPLATE_PHRASES = [
+    "overall development",
+    "importance of education",
+    "study corner and kitchen garden",
+    "kitchen garden and study corner",
+    "daily study plans",
+    "academic progress",
+    "magic bus program",
+    "life skills sessions",
+    "digital literacy sessions",
+    "parents were requested",
+    "parents actively participated",
+    "provided updates",
 ]
 
+AI_PROMPT_COPY_PHRASES = [
+    "here is an improved version",
+    "additional relevant line",
+    "as an ai",
+    "chatgpt",
+    "generated response",
+    "improved version",
+    "relevant line",
+    "draft",
+    "rewrite",
+]
 
-def clickable_logo(img_path, link_url, width=150):
+SPORTS_QUOTES = [
+    "Champions keep playing until they get it right.",
+    "You miss 100% of the shots you don’t take.",
+    "Discipline turns practice into performance.",
+    "Pressure is a privilege.",
+    "Consistency beats intensity when the season is long.",
+]
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+def clickable_logo(img_path, link_url, width=130):
     try:
         img_bytes = Path(img_path).read_bytes()
         encoded = base64.b64encode(img_bytes).decode()
@@ -96,12 +237,14 @@ def clickable_logo(img_path, link_url, width=150):
         st.warning("Logo file not found. Please keep 'magicbus_logo.png' in the same folder.")
 
 
-def remove_footer_and_blank_rows(df: pd.DataFrame):
+def remove_footer_and_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = df.dropna(how="all")
 
     footer_mask = df.apply(
-        lambda row: row.astype(str).str.contains("Applied filters", case=False, na=False).any(),
+        lambda row: row.astype(str)
+        .str.contains("Applied filters", case=False, na=False)
+        .any(),
         axis=1,
     )
 
@@ -109,7 +252,7 @@ def remove_footer_and_blank_rows(df: pd.DataFrame):
     return df.reset_index(drop=True)
 
 
-def apply_schema_types(df: pd.DataFrame):
+def apply_schema_types(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
@@ -119,7 +262,11 @@ def apply_schema_types(df: pd.DataFrame):
             continue
 
         if dtype == "date":
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True).dt.date
+            df[col] = pd.to_datetime(
+                df[col],
+                errors="coerce",
+                dayfirst=True,
+            ).dt.date
         else:
             df[col] = (
                 df[col]
@@ -133,99 +280,126 @@ def apply_schema_types(df: pd.DataFrame):
     return df
 
 
-def clean_remarks_text(text):
+def normalize_text(text: str) -> str:
     text = "" if pd.isna(text) else str(text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def normalize_remarks_text(text):
-    text = clean_remarks_text(text).lower()
+    text = text.lower()
+    text = text.replace("’", "'").replace("“", '"').replace("”", '"')
     text = re.sub(r"[^a-z0-9\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
-def extract_themes(text):
-    text_l = normalize_remarks_text(text)
-    matched = []
+def make_key(df: pd.DataFrame, cols: list) -> pd.Series:
+    parts = []
+    for col in cols:
+        if col == "HOUSE VISIT DATE":
+            parts.append(df[col].astype(str))
+        else:
+            parts.append(df[col].fillna("").astype(str))
+    key = parts[0]
+    for p in parts[1:]:
+        key = key + " | " + p
+    return key
 
+
+def detect_themes(text: str) -> str:
+    text_norm = normalize_text(text)
+    themes = []
     for theme, keywords in THEME_KEYWORDS.items():
-        if any(kw in text_l for kw in keywords):
-            matched.append(theme)
+        if any(k in text_norm for k in keywords):
+            themes.append(theme)
+    return ", ".join(themes) if themes else "Unclassified"
 
-    return " | ".join(matched) if matched else "Unclassified"
+
+def count_themes(text: str) -> int:
+    theme_string = detect_themes(text)
+    if theme_string == "Unclassified":
+        return 0
+    return len(theme_string.split(", "))
 
 
-def detect_template_reason(text):
-    text_l = normalize_remarks_text(text)
+def detect_ai_prompt_copy(text: str) -> int:
+    text_norm = normalize_text(text)
+    return int(any(phrase in text_norm for phrase in AI_PROMPT_COPY_PHRASES))
+
+
+def template_detection(text: str) -> tuple:
+    """
+    Returns Template_Flag, Template_Score, Template_Reason.
+    This is rule-based and free/open-source friendly.
+    """
+    text_norm = normalize_text(text)
+    if text_norm == "":
+        return 0, 0, "Blank remark"
+
+    score = 0
     reasons = []
 
-    if len(text_l) == 0:
-        return "Blank remarks"
+    if any(text_norm.startswith(opening) for opening in COMMON_TEMPLATE_OPENINGS):
+        score += 25
+        reasons.append("Common opening phrase")
 
-    if any(text_l.startswith(p) or p in text_l for p in COMMON_TEMPLATE_PHRASES):
-        reasons.append("Common field template phrase")
+    matched_generic = [p for p in GENERIC_TEMPLATE_PHRASES if p in text_norm]
+    if len(matched_generic) >= 1:
+        score += 20
+        reasons.append("Generic programme phrase")
 
-    keyword_hits = 0
-    for keywords in THEME_KEYWORDS.values():
-        if any(kw in text_l for kw in keywords):
-            keyword_hits += 1
+    themes_count = count_themes(text_norm)
+    if themes_count >= 3:
+        score += 15
+        reasons.append("Multiple standard intervention keywords")
 
-    if keyword_hits >= 3:
-        reasons.append("Repeated intervention keyword pattern")
+    word_count = len(text_norm.split())
+    if word_count >= 25 and matched_generic:
+        score += 15
+        reasons.append("Long structured programme-style remark")
 
-    if any(p in text_l for p in AI_SUSPICIOUS_PHRASES):
-        reasons.append("Possible AI / copied prompt wording")
+    if detect_ai_prompt_copy(text_norm):
+        score += 40
+        reasons.append("Possible AI/prompt copy phrase")
 
-    words = text_l.split()
-    if len(words) >= 25:
-        generic_words = ["discussed", "explained", "importance", "parents", "children", "program", "study"]
-        if sum(1 for w in generic_words if w in words) >= 4:
-            reasons.append("Long generic narrative pattern")
-
-    return " | ".join(reasons)
+    flag = int(score >= 40)
+    return flag, min(score, 100), " + ".join(reasons) if reasons else "No template signal"
 
 
-def remarks_quality_band(word_count):
-    if word_count == 0:
-        return "Blank"
-    elif word_count <= 5:
-        return "Poor"
-    elif word_count <= 15:
+def remarks_quality_band(word_count: int, blank_flag: int, ai_flag: int, same_flag: int, template_flag: int) -> str:
+    if blank_flag == 1:
+        return "Poor - Blank"
+    if ai_flag == 1:
+        return "Critical Review - Possible AI/Prompt Copy"
+    if same_flag == 1 and template_flag == 1:
+        return "High Review - Repeated Template"
+    if same_flag == 1:
+        return "Review - Repeated Remark"
+    if template_flag == 1:
+        return "Review - Template-like"
+    if word_count <= 5:
+        return "Poor - Too Short"
+    if word_count <= 15:
         return "Fair"
-    elif word_count <= 30:
+    if word_count <= 35:
         return "Good"
-    else:
-        return "Detailed"
+    return "Detailed"
 
 
-def risk_band(score):
-    if score <= 20:
-        return "Low"
-    elif score <= 50:
-        return "Moderate"
-    elif score <= 80:
-        return "High"
-    else:
-        return "Very High"
+def pct(num, den):
+    return round((num / den * 100), 1) if den else 0.0
 
 
+# ============================================================
+# DQI DUPLICATE PROCESSING
+# ============================================================
 def process_housevisit_dqi(df: pd.DataFrame):
     df = remove_footer_and_blank_rows(df)
     df = apply_schema_types(df)
 
-    df["DQI_DUPLICATE_KEY"] = (
-        df["PROGRAM LAUNCH NAME"] + " | " +
-        df["ProjectType"] + " | " +
-        df["CHILD ID"] + " | " +
-        df["TMO Name"] + " | " +
-        df["YM Name"] + " | " +
-        df["HOUSE VISIT DATE"].astype(str)
-    )
+    df["DQI_DUPLICATE_KEY"] = make_key(df, DEDUPE_KEY_COLS)
 
     df["Duplicate_Order"] = df.groupby("DQI_DUPLICATE_KEY").cumcount()
     df["Duplicate_Group_Size"] = df.groupby("DQI_DUPLICATE_KEY")["DQI_DUPLICATE_KEY"].transform("count")
 
-    # 0 = Unique / first record, 1 = Duplicate / repeated record
+    # 0 = Unique / first valid record
+    # 1 = Duplicate / repeated record
     df["Duplicate"] = (df["Duplicate_Order"] > 0).astype(int)
 
     full_dataset = df.copy()
@@ -236,248 +410,250 @@ def process_housevisit_dqi(df: pd.DataFrame):
         df[df["Duplicate_Group_Size"] > 1]
         .groupby(DEDUPE_KEY_COLS, dropna=False)
         .agg(
-            Duplicate_Group_Size=("DQI_DUPLICATE_KEY", "count"),
+            Records_In_Key=("DQI_DUPLICATE_KEY", "count"),
             Duplicate_Removed=("Duplicate", "sum"),
             HouseVisitID_List=("HouseVisitID", lambda x: ", ".join(x.astype(str))),
-            Remarks_List=("REMARKS", lambda x: " || ".join(x.astype(str).unique())),
+            Remarks_List=("REMARKS", lambda x: " || ".join(pd.Series(x.astype(str).unique()).head(5))),
         )
         .reset_index()
-        .sort_values("Duplicate_Group_Size", ascending=False)
+        .sort_values("Records_In_Key", ascending=False)
     )
 
-    stats = {
-        "rows_before": len(df),
-        "clean_rows": len(clean_dataset),
-        "duplicate_rows": len(duplicate_dataset),
-        "duplicate_groups": len(duplicate_summary),
-    }
-
-    return full_dataset, clean_dataset, duplicate_dataset, duplicate_summary, stats
+    return full_dataset, clean_dataset, duplicate_dataset, duplicate_summary
 
 
-def create_remarks_intelligence(df: pd.DataFrame):
-    df = remove_footer_and_blank_rows(df)
-    df = apply_schema_types(df)
+# ============================================================
+# REMARKS INTELLIGENCE
+# ============================================================
+def create_remarks_intelligence(clean_dataset: pd.DataFrame):
+    """
+    Important: Remarks intelligence is calculated on clean unique data only.
+    This avoids duplicate rows inflating copy-paste/template results.
+    """
+    df = clean_dataset.copy()
 
-    df["REMARKS_CLEAN"] = df["REMARKS"].apply(clean_remarks_text)
-    df["REMARKS_NORMALIZED"] = df["REMARKS"].apply(normalize_remarks_text)
+    df["REMARKS_CONTEXT_KEY"] = make_key(df, REMARKS_CONTEXT_COLS)
 
-    df["REMARKS_CONTEXT_KEY"] = (
-        df["PROGRAM LAUNCH NAME"] + " | " +
-        df["Sub Type"] + " | " +
-        df["HOUSE VISIT TYPE"] + " | " +
-        df["TMO Name"] + " | " +
-        df["YM Name"] + " | " +
-        df["CHILD ID"] + " | " +
-        df["HOUSE VISIT DATE"].astype(str)
+    df["REMARKS_CLEAN"] = (
+        df["REMARKS"]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
     )
 
-    df["Remarks_Word_Count"] = df["REMARKS_CLEAN"].apply(lambda x: len(x.split()) if x else 0)
-    df["Remarks_Quality_Band"] = df["Remarks_Word_Count"].apply(remarks_quality_band)
+    df["REMARKS_CANONICAL"] = df["REMARKS_CLEAN"].apply(normalize_text)
+    df["Blank_Remark"] = df["REMARKS_CANONICAL"].apply(lambda x: 1 if x == "" or x in ["nan", "none"] else 0)
+    df["Remarks_Word_Count"] = df["REMARKS_CANONICAL"].apply(lambda x: len(x.split()) if x else 0)
 
-    df["REMARKS_STATUS"] = df["REMARKS_CLEAN"].apply(
-        lambda x: "Blank / Missing" if x == "" or x.lower() in ["nan", "none"] else "Available"
+    # Same remark repeated: exact same canonical remark reused by the same TMO/YM/program/visit-type context.
+    same_remark_group = REMARK_REUSE_GROUP_COLS + ["REMARKS_CANONICAL"]
+    df["Same_Remark_Group_Size"] = df.groupby(same_remark_group, dropna=False)["REMARKS_CANONICAL"].transform("count")
+    df["Same_Remark_Repeated"] = ((df["Same_Remark_Group_Size"] > 1) & (df["Blank_Remark"] == 0)).astype(int)
+
+    # Template detection
+    template_results = df["REMARKS_CLEAN"].apply(template_detection)
+    df["Template_Flag"] = template_results.apply(lambda x: x[0])
+    df["Template_Score"] = template_results.apply(lambda x: x[1])
+    df["Template_Reason"] = template_results.apply(lambda x: x[2])
+
+    df["Possible_AI_Prompt_Copy"] = df["REMARKS_CLEAN"].apply(detect_ai_prompt_copy)
+
+    # Theme tagging
+    df["Remarks_Themes"] = df["REMARKS_CLEAN"].apply(detect_themes)
+    df["Theme_Count"] = df["REMARKS_CLEAN"].apply(count_themes)
+
+    df["Remarks_Quality_Band"] = df.apply(
+        lambda r: remarks_quality_band(
+            r["Remarks_Word_Count"],
+            r["Blank_Remark"],
+            r["Possible_AI_Prompt_Copy"],
+            r["Same_Remark_Repeated"],
+            r["Template_Flag"],
+        ),
+        axis=1,
     )
 
-    # Same remark repeated within the same field context
-    df["Same_Remark_Group_Size"] = (
-        df.groupby(["REMARKS_CONTEXT_KEY", "REMARKS_NORMALIZED"])["REMARKS_NORMALIZED"]
-        .transform("count")
-    )
-    df["Same_Remark_Order"] = df.groupby(["REMARKS_CONTEXT_KEY", "REMARKS_NORMALIZED"]).cumcount()
-    df["Same_Remark_Repeated"] = (df["Same_Remark_Order"] > 0).astype(int)
+    # Executive-level summaries
+    group_cols = ["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type"]
 
-    df["Template_Reason"] = df["REMARKS_CLEAN"].apply(detect_template_reason)
-    df["Template_Flag"] = df["Template_Reason"].apply(lambda x: 1 if x not in ["", "Blank remarks"] else 0)
-    df["Possible_AI_or_Prompt_Copy"] = df["Template_Reason"].str.contains("Possible AI", case=False, na=False).astype(int)
-    df["Remarks_Theme"] = df["REMARKS_CLEAN"].apply(extract_themes)
-
-    df["Global_Remark_Frequency"] = df.groupby("REMARKS_NORMALIZED")["REMARKS_NORMALIZED"].transform("count")
-    df["Global_Repeated_Remark"] = (df["Global_Remark_Frequency"] > 1).astype(int)
-
-    group_cols = ["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type", "TMO Name", "YM Name"]
-
-    copy_paste_score = (
+    remarks_summary = (
         df.groupby(group_cols, dropna=False)
         .agg(
-            Total_Records=("CHILD ID", "count"),
+            Clean_Unique_Records=("CHILD ID", "count"),
             Unique_Children=("CHILD ID", "nunique"),
-            Remarks_Available=("REMARKS_STATUS", lambda x: (x == "Available").sum()),
-            Blank_Remarks=("REMARKS_STATUS", lambda x: (x == "Blank / Missing").sum()),
-            Same_Remark_Repeated_Count=("Same_Remark_Repeated", "sum"),
-            Template_Flag_Count=("Template_Flag", "sum"),
-            Possible_AI_or_Prompt_Copy_Count=("Possible_AI_or_Prompt_Copy", "sum"),
-            Avg_Word_Count=("Remarks_Word_Count", "mean"),
-            Unique_Remarks=("REMARKS_NORMALIZED", "nunique"),
+            Blank_Remarks=("Blank_Remark", "sum"),
+            Same_Remark_Repeated=("Same_Remark_Repeated", "sum"),
+            Template_Flag=("Template_Flag", "sum"),
+            Possible_AI_Prompt_Copy=("Possible_AI_Prompt_Copy", "sum"),
+            Avg_Remarks_Word_Count=("Remarks_Word_Count", "mean"),
+            Unique_Remarks=("REMARKS_CANONICAL", "nunique"),
         )
         .reset_index()
     )
 
-    copy_paste_score["Copy_Paste_Score_%"] = (
-        copy_paste_score["Same_Remark_Repeated_Count"] / copy_paste_score["Total_Records"] * 100
-    ).round(1)
-    copy_paste_score["Template_Usage_%"] = (
-        copy_paste_score["Template_Flag_Count"] / copy_paste_score["Total_Records"] * 100
-    ).round(1)
-    copy_paste_score["Blank_Remarks_%"] = (
-        copy_paste_score["Blank_Remarks"] / copy_paste_score["Total_Records"] * 100
-    ).round(1)
-    copy_paste_score["Avg_Word_Count"] = copy_paste_score["Avg_Word_Count"].round(1)
-    copy_paste_score["Copy_Paste_Risk_Band"] = copy_paste_score["Copy_Paste_Score_%"].apply(risk_band)
+    remarks_summary["Same_Remark_Repeated_%"] = remarks_summary.apply(
+        lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1
+    )
+    remarks_summary["Template_Flag_%"] = remarks_summary.apply(
+        lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1
+    )
+    remarks_summary["Blank_Remark_%"] = remarks_summary.apply(
+        lambda r: pct(r["Blank_Remarks"], r["Clean_Unique_Records"]), axis=1
+    )
+    remarks_summary["Avg_Remarks_Word_Count"] = remarks_summary["Avg_Remarks_Word_Count"].round(1)
 
-    summary_cols = ["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type"]
-    remarks_summary = (
-        df.groupby(summary_cols, dropna=False)
+    # Leaderboard by YM
+    ym_summary = (
+        df.groupby(["REGION", "STATE", "DISTRICT", "TMO Name", "YM Name"], dropna=False)
         .agg(
-            Total_Records=("CHILD ID", "count"),
+            Clean_Unique_Records=("CHILD ID", "count"),
             Unique_Children=("CHILD ID", "nunique"),
-            Remarks_Available=("REMARKS_STATUS", lambda x: (x == "Available").sum()),
-            Blank_Remarks=("REMARKS_STATUS", lambda x: (x == "Blank / Missing").sum()),
-            Same_Remark_Repeated_Count=("Same_Remark_Repeated", "sum"),
-            Template_Flag_Count=("Template_Flag", "sum"),
-            Possible_AI_or_Prompt_Copy_Count=("Possible_AI_or_Prompt_Copy", "sum"),
+            Same_Remark_Repeated=("Same_Remark_Repeated", "sum"),
+            Template_Flag=("Template_Flag", "sum"),
+            Possible_AI_Prompt_Copy=("Possible_AI_Prompt_Copy", "sum"),
+            Blank_Remarks=("Blank_Remark", "sum"),
             Avg_Word_Count=("Remarks_Word_Count", "mean"),
-            Unique_Remarks=("REMARKS_NORMALIZED", "nunique"),
+            Unique_Remarks=("REMARKS_CANONICAL", "nunique"),
         )
         .reset_index()
     )
+    ym_summary["Copy_Paste_Score_%"] = ym_summary.apply(
+        lambda r: pct(r["Same_Remark_Repeated"], r["Clean_Unique_Records"]), axis=1
+    )
+    ym_summary["Template_Score_%"] = ym_summary.apply(
+        lambda r: pct(r["Template_Flag"], r["Clean_Unique_Records"]), axis=1
+    )
+    ym_summary["Avg_Word_Count"] = ym_summary["Avg_Word_Count"].round(1)
+    ym_summary = ym_summary.sort_values(["Copy_Paste_Score_%", "Template_Score_%"], ascending=False)
 
-    remarks_summary["Copy_Paste_Score_%"] = (
-        remarks_summary["Same_Remark_Repeated_Count"] / remarks_summary["Total_Records"] * 100
-    ).round(1)
-    remarks_summary["Template_Usage_%"] = (
-        remarks_summary["Template_Flag_Count"] / remarks_summary["Total_Records"] * 100
-    ).round(1)
-    remarks_summary["Blank_Remarks_%"] = (
-        remarks_summary["Blank_Remarks"] / remarks_summary["Total_Records"] * 100
-    ).round(1)
-    remarks_summary["Avg_Word_Count"] = remarks_summary["Avg_Word_Count"].round(1)
+    # Top repeated remarks
+    repeated_remarks = (
+        df[df["Blank_Remark"] == 0]
+        .groupby(REMARK_REUSE_GROUP_COLS + ["REMARKS_CLEAN"], dropna=False)
+        .agg(
+            Reuse_Count=("REMARKS_CLEAN", "count"),
+            Child_Count=("CHILD ID", "nunique"),
+            First_House_Visit_Date=("HOUSE VISIT DATE", "min"),
+            Last_House_Visit_Date=("HOUSE VISIT DATE", "max"),
+        )
+        .reset_index()
+        .query("Reuse_Count > 1")
+        .sort_values("Reuse_Count", ascending=False)
+    )
 
+    # Theme summary
     theme_rows = []
     for _, row in df.iterrows():
-        for theme in str(row["Remarks_Theme"]).split(" | "):
+        themes = row["Remarks_Themes"].split(", ") if row["Remarks_Themes"] != "Unclassified" else ["Unclassified"]
+        for theme in themes:
             theme_rows.append({
                 "REGION": row["REGION"],
                 "STATE": row["STATE"],
                 "DISTRICT": row["DISTRICT"],
                 "PROGRAM LAUNCH NAME": row["PROGRAM LAUNCH NAME"],
                 "Sub Type": row["Sub Type"],
-                "TMO Name": row["TMO Name"],
-                "YM Name": row["YM Name"],
-                "Remarks_Theme": theme,
+                "Theme": theme,
+                "CHILD ID": row["CHILD ID"],
             })
 
-    theme_df = pd.DataFrame(theme_rows)
-    if not theme_df.empty:
+    if theme_rows:
+        theme_df = pd.DataFrame(theme_rows)
         theme_summary = (
-            theme_df.groupby(["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type", "Remarks_Theme"], dropna=False)
-            .size()
-            .reset_index(name="Theme_Count")
-            .sort_values("Theme_Count", ascending=False)
+            theme_df.groupby(["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type", "Theme"], dropna=False)
+            .agg(Records=("Theme", "count"), Unique_Children=("CHILD ID", "nunique"))
+            .reset_index()
+            .sort_values("Records", ascending=False)
         )
     else:
-        theme_summary = pd.DataFrame()
+        theme_summary = pd.DataFrame(columns=["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type", "Theme", "Records", "Unique_Children"])
 
-    top_repeated_remarks = (
-        df[df["REMARKS_STATUS"] == "Available"]
-        .groupby("REMARKS_CLEAN")
-        .size()
-        .reset_index(name="Count")
-        .sort_values("Count", ascending=False)
-    )
-
-    context_repeated_remarks = (
-        df[df["Same_Remark_Group_Size"] > 1]
-        .groupby(REMARKS_CONTEXT_KEY_COLS + ["REMARKS_CLEAN"], dropna=False)
-        .agg(
-            Same_Remark_Group_Size=("Same_Remark_Group_Size", "max"),
-            HouseVisitID_List=("HouseVisitID", lambda x: ", ".join(x.astype(str))),
-        )
-        .reset_index()
-        .sort_values("Same_Remark_Group_Size", ascending=False)
-    )
-
-    remarks_stats = {
-        "total_records": len(df),
-        "same_remark_repeated": int(df["Same_Remark_Repeated"].sum()),
-        "template_flag": int(df["Template_Flag"].sum()),
-        "blank_remarks": int((df["REMARKS_STATUS"] == "Blank / Missing").sum()),
-        "possible_ai": int(df["Possible_AI_or_Prompt_Copy"].sum()),
-    }
-
-    return {
-        "remarks_full": df,
-        "remarks_summary": remarks_summary,
-        "copy_paste_score": copy_paste_score,
-        "theme_summary": theme_summary,
-        "top_repeated_remarks": top_repeated_remarks,
-        "context_repeated_remarks": context_repeated_remarks,
-        "remarks_stats": remarks_stats,
-    }
+    return df, remarks_summary, ym_summary, repeated_remarks, theme_summary
 
 
-def create_excel_output(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary, remarks_outputs):
+# ============================================================
+# EXCEL EXPORT
+# ============================================================
+def create_excel_outputs(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
+                         remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary):
     output_file = BytesIO()
-
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        full_dataset.to_excel(writer, index=False, sheet_name="Full_Data_Duplicate_Flag")
-        clean_dataset.to_excel(writer, index=False, sheet_name="Clean_Unique_Data")
-        duplicate_dataset.to_excel(writer, index=False, sheet_name="Duplicate_Only")
-        duplicate_summary.to_excel(writer, index=False, sheet_name="Duplicate_Summary")
-        remarks_outputs["remarks_full"].to_excel(writer, index=False, sheet_name="Remarks_Full_Intelligence")
-        remarks_outputs["remarks_summary"].to_excel(writer, index=False, sheet_name="Remarks_Summary")
-        remarks_outputs["copy_paste_score"].to_excel(writer, index=False, sheet_name="Copy_Paste_Score")
-        remarks_outputs["theme_summary"].to_excel(writer, index=False, sheet_name="Theme_Summary")
-        remarks_outputs["top_repeated_remarks"].to_excel(writer, index=False, sheet_name="Top_Repeated_Remarks")
-        remarks_outputs["context_repeated_remarks"].to_excel(writer, index=False, sheet_name="Context_Repeated_Remarks")
+        full_dataset.to_excel(writer, index=False, sheet_name="01_Full_Data_Duplicate_Flag")
+        clean_dataset.to_excel(writer, index=False, sheet_name="02_Clean_Unique_Data")
+        duplicate_dataset.to_excel(writer, index=False, sheet_name="03_Duplicate_Only")
+        duplicate_summary.to_excel(writer, index=False, sheet_name="04_Duplicate_Summary")
+        remarks_dataset.to_excel(writer, index=False, sheet_name="05_Remarks_Row_Level")
+        remarks_summary.to_excel(writer, index=False, sheet_name="06_Remarks_Summary")
+        ym_summary.to_excel(writer, index=False, sheet_name="07_YM_Leaderboard")
+        repeated_remarks.to_excel(writer, index=False, sheet_name="08_Repeated_Remarks")
+        theme_summary.to_excel(writer, index=False, sheet_name="09_Theme_Summary")
 
     output_file.seek(0)
     return output_file
 
 
-# -------------------------------------------------------
-# STREAMLIT UI
-# -------------------------------------------------------
-clickable_logo("magicbus_logo.png", "https://www.magicbus.org/", width=140)
+def get_risk_label(rate):
+    if rate <= 20:
+        return "Low"
+    if rate <= 50:
+        return "Watch"
+    return "High"
+
+
+# ============================================================
+# HEADER
+# ============================================================
+clickable_logo("magicbus_logo.png", "https://www.magicbus.org/", width=130)
+
+today = datetime.now().strftime("%d %b %Y")
+quote = SPORTS_QUOTES[datetime.now().day % len(SPORTS_QUOTES)]
+
+st.markdown('<div class="center-title">House Visit Data Quality Intelligence Platform (DQI)</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="center-subtitle">Duplicate Detection • Remarks Intelligence • Copy-Paste Review • Template Detection • Field Data Quality</div>',
+    unsafe_allow_html=True
+)
+
+left, right = st.columns([2, 1])
+with left:
+    st.markdown(
+        f"""
+        <div class="quote-card">
+            <b>Sports mindset for data quality</b><br>
+            “{quote}”
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+with right:
+    st.markdown(
+        f"""
+        <div class="date-card">
+            <b>Report Date</b><br>
+            {today}<br>
+            <span class="metric-note">System date from deployment server</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown("---")
 
 st.markdown(
     """
-    <h1 style='text-align: center; color: #1f2937;'>
-        House Visit Data Quality Intelligence Platform (DQI)
-    </h1>
-    <p style='text-align: center; font-size: 17px; color: #4b5563;'>
-        Duplicate Detection | Remarks Intelligence | Copy Paste Score | Template Detection
-    </p>
+    <div class="section-card">
+    <b>How to read the DQI dashboard:</b><br>
+    Duplicate records are removed first. Remarks intelligence is then calculated only on the <b>Clean Unique Dataset</b>.
+    Therefore, Same Remark Repeated, Template Flag, Blank Remarks, and AI/Prompt Copy are quality flags within the clean data.
+    These flags can overlap, so they should not be added together.
+    </div>
     """,
     unsafe_allow_html=True
 )
 
-st.markdown("---")
-
-with st.expander("DQI Logic Used in This Tool", expanded=False):
-    st.write("""
-    **Duplicate Detection Key**  
-    PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE
-
-    **Remarks Intelligence Context Key**  
-    PROGRAM LAUNCH NAME + Sub Type + HOUSE VISIT TYPE + TMO Name + YM Name + CHILD ID + HOUSE VISIT DATE
-
-    **New Variables Added**
-    - Duplicate
-    - DQI_DUPLICATE_KEY
-    - REMARKS_CONTEXT_KEY
-    - REMARKS_CLEAN
-    - REMARKS_NORMALIZED
-    - Same_Remark_Repeated
-    - Same_Remark_Group_Size
-    - Template_Flag
-    - Template_Reason
-    - Remarks_Theme
-    - Remarks_Word_Count
-    - Remarks_Quality_Band
-    - Possible_AI_or_Prompt_Copy
-    """)
-
+# ============================================================
+# UPLOAD
+# ============================================================
 uploaded = st.file_uploader(
     "Upload House Visit Data File (.xlsx, .xls, .xlsm, .csv)",
     type=["xlsx", "xls", "xlsm", "csv"],
@@ -486,7 +662,7 @@ uploaded = st.file_uploader(
 if uploaded:
     st.success(f"File uploaded: **{uploaded.name}**")
 
-    if st.button("Run DQI Tool"):
+    if st.button("Run DQI Analysis", type="primary"):
         try:
             file_name = uploaded.name.lower()
 
@@ -495,65 +671,166 @@ if uploaded:
             else:
                 df = pd.read_excel(uploaded)
 
-            full_dataset, clean_dataset, duplicate_dataset, duplicate_summary, dqi_stats = process_housevisit_dqi(df)
-            remarks_outputs = create_remarks_intelligence(df)
-            output_xlsx = create_excel_output(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary, remarks_outputs)
+            full_dataset, clean_dataset, duplicate_dataset, duplicate_summary = process_housevisit_dqi(df)
+            remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary = create_remarks_intelligence(clean_dataset)
+
+            total_records = len(full_dataset)
+            clean_records = len(clean_dataset)
+            duplicate_records = len(duplicate_dataset)
+            duplicate_rate = pct(duplicate_records, total_records)
+
+            same_remark_count = int(remarks_dataset["Same_Remark_Repeated"].sum())
+            template_flag_count = int(remarks_dataset["Template_Flag"].sum())
+            blank_remarks_count = int(remarks_dataset["Blank_Remark"].sum())
+            ai_prompt_count = int(remarks_dataset["Possible_AI_Prompt_Copy"].sum())
+
+            same_remark_rate = pct(same_remark_count, clean_records)
+            template_rate = pct(template_flag_count, clean_records)
+            blank_rate = pct(blank_remarks_count, clean_records)
+            ai_rate = pct(ai_prompt_count, clean_records)
 
             base_name = uploaded.name.rsplit(".", 1)[0]
-            output_name = f"{base_name}_HouseVisit_DQI_Output.xlsx"
-            zip_name = f"{base_name}_HouseVisit_DQI_Bundle.zip"
+            output_name = f"{base_name}_DQI_Intelligence_Output.xlsx"
+            zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "DQI Summary",
-                "Duplicate Detection",
+            output_xlsx = create_excel_outputs(
+                full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
+                remarks_dataset, remarks_summary, ym_summary, repeated_remarks, theme_summary
+            )
+
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "Executive Summary",
+                "Duplicate Intelligence",
                 "Remarks Intelligence",
-                "Copy Paste & Template Detection",
-                "Downloads",
+                "Downloads"
             ])
 
             with tab1:
-                st.subheader("DQI Summary")
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Total Records", dqi_stats["rows_before"])
-                col2.metric("Clean Unique Records", dqi_stats["clean_rows"])
-                col3.metric("Duplicate Records", dqi_stats["duplicate_rows"])
-                col4.metric("Duplicate Groups", dqi_stats["duplicate_groups"])
+                st.subheader("CXO Summary")
 
-                rstats = remarks_outputs["remarks_stats"]
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Records Uploaded", f"{total_records:,}")
+                col2.metric("Clean Unique Records", f"{clean_records:,}")
+                col3.metric("Duplicate Records Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
+                col4.metric("Remarks Quality Base", f"{clean_records:,}", "Clean data only")
+
                 col5, col6, col7, col8 = st.columns(4)
-                col5.metric("Same Remark Repeated", rstats["same_remark_repeated"])
-                col6.metric("Template Flag", rstats["template_flag"])
-                col7.metric("Blank Remarks", rstats["blank_remarks"])
-                col8.metric("Possible AI / Prompt Copy", rstats["possible_ai"])
+                col5.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}% of clean")
+                col6.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}% of clean")
+                col7.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}% of clean")
+                col8.metric("Blank Remarks", f"{blank_remarks_count:,}", f"{blank_rate}% of clean")
+
+                st.info(
+                    "Important: Same Remark Repeated and Template-like Remarks are overlapping quality flags. "
+                    "A single clean record can be counted in both categories."
+                )
+
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    st.markdown("### Quality Risk Snapshot")
+                    risk_df = pd.DataFrame({
+                        "Indicator": [
+                            "Duplicate Rate",
+                            "Same Remark Repeated Rate",
+                            "Template-like Remark Rate",
+                            "Possible AI/Prompt Copy Rate",
+                            "Blank Remark Rate",
+                        ],
+                        "Rate %": [
+                            duplicate_rate,
+                            same_remark_rate,
+                            template_rate,
+                            ai_rate,
+                            blank_rate,
+                        ],
+                        "Risk": [
+                            get_risk_label(duplicate_rate),
+                            get_risk_label(same_remark_rate),
+                            get_risk_label(template_rate),
+                            get_risk_label(ai_rate),
+                            get_risk_label(blank_rate),
+                        ]
+                    })
+                    st.dataframe(risk_df, use_container_width=True, hide_index=True)
+
+                with c2:
+                    st.markdown("### Theme Distribution")
+                    if not theme_summary.empty:
+                        theme_chart = (
+                            theme_summary.groupby("Theme", as_index=False)["Records"].sum()
+                            .sort_values("Records", ascending=False)
+                            .head(10)
+                        )
+                        st.bar_chart(theme_chart.set_index("Theme"))
+                    else:
+                        st.write("No theme data available.")
+
+                st.markdown("### Top YM / TMO Quality Review")
+                st.dataframe(
+                    ym_summary.head(20),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             with tab2:
-                st.subheader("Duplicate Summary")
-                st.dataframe(duplicate_summary.head(200), use_container_width=True)
-                st.subheader("Full Dataset with Duplicate Flag")
-                st.dataframe(full_dataset.head(200), use_container_width=True)
-                st.subheader("Clean Unique Dataset")
-                st.dataframe(clean_dataset.head(200), use_container_width=True)
+                st.subheader("Duplicate Intelligence")
+                st.caption(
+                    "Duplicate logic: PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE"
+                )
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Records", f"{total_records:,}")
+                col2.metric("Clean Unique Records", f"{clean_records:,}")
+                col3.metric("Duplicate Removed", f"{duplicate_records:,}", f"{duplicate_rate}%")
+
+                st.markdown("### Duplicate Summary")
+                st.dataframe(duplicate_summary.head(200), use_container_width=True, hide_index=True)
+
+                st.markdown("### Full Dataset with Duplicate Flag")
+                st.dataframe(full_dataset.head(200), use_container_width=True, hide_index=True)
 
             with tab3:
-                st.subheader("Remarks Summary")
-                st.dataframe(remarks_outputs["remarks_summary"].head(200), use_container_width=True)
-                st.subheader("Theme Summary")
-                st.dataframe(remarks_outputs["theme_summary"].head(200), use_container_width=True)
-                st.subheader("Top Repeated Remarks")
-                st.dataframe(remarks_outputs["top_repeated_remarks"].head(100), use_container_width=True)
+                st.subheader("Remarks Intelligence")
+                st.caption(
+                    "Remarks intelligence is calculated on clean unique data only to avoid duplicate inflation."
+                )
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Clean Records Analysed", f"{clean_records:,}")
+                c2.metric("Same Remark Repeated", f"{same_remark_count:,}", f"{same_remark_rate}%")
+                c3.metric("Template-like Remarks", f"{template_flag_count:,}", f"{template_rate}%")
+                c4.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}", f"{ai_rate}%")
+
+                st.markdown("### Remarks Summary by Geography / Program")
+                st.dataframe(remarks_summary.head(200), use_container_width=True, hide_index=True)
+
+                st.markdown("### Repeated Remarks")
+                st.dataframe(repeated_remarks.head(200), use_container_width=True, hide_index=True)
+
+                st.markdown("### Theme Summary")
+                st.dataframe(theme_summary.head(200), use_container_width=True, hide_index=True)
+
+                st.markdown("### Row Level Remarks Intelligence")
+                st.dataframe(
+                    remarks_dataset[
+                        [
+                            "REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type",
+                            "TMO Name", "YM Name", "CHILD ID", "HOUSE VISIT DATE",
+                            "REMARKS", "Same_Remark_Repeated", "Template_Flag",
+                            "Template_Score", "Template_Reason", "Possible_AI_Prompt_Copy",
+                            "Remarks_Themes", "Remarks_Word_Count", "Remarks_Quality_Band"
+                        ]
+                    ].head(300),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             with tab4:
-                st.subheader("Copy Paste Score by Region / Program / TMO / YM")
-                st.dataframe(remarks_outputs["copy_paste_score"].head(200), use_container_width=True)
-                st.subheader("Same Remark Repeated within Remarks Context Key")
-                st.dataframe(remarks_outputs["context_repeated_remarks"].head(200), use_container_width=True)
-                st.subheader("Full Remarks Intelligence Dataset")
-                st.dataframe(remarks_outputs["remarks_full"].head(200), use_container_width=True)
+                st.subheader("Download Reports")
 
-            with tab5:
-                st.subheader("Download Final Output")
                 st.download_button(
-                    "Download House Visit DQI Excel Output",
+                    "Download Complete DQI Intelligence Excel",
                     data=output_xlsx.getvalue(),
                     file_name=output_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -562,14 +839,41 @@ if uploaded:
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     zf.writestr(output_name, output_xlsx.getvalue())
+
                 zip_buffer.seek(0)
 
                 st.download_button(
-                    "Download Complete DQI Bundle ZIP",
+                    "Download ZIP Bundle",
                     data=zip_buffer,
                     file_name=zip_name,
                     mime="application/zip",
                 )
 
+                st.markdown("### Excel Sheets Included")
+                st.write(
+                    """
+                    01_Full_Data_Duplicate_Flag  
+                    02_Clean_Unique_Data  
+                    03_Duplicate_Only  
+                    04_Duplicate_Summary  
+                    05_Remarks_Row_Level  
+                    06_Remarks_Summary  
+                    07_YM_Leaderboard  
+                    08_Repeated_Remarks  
+                    09_Theme_Summary  
+                    """
+                )
+
         except Exception as e:
             st.error(f"Error: {e}")
+else:
+    st.markdown(
+        """
+        <div class="section-card">
+        <b>Upload a House Visit file to begin.</b><br>
+        The app is designed for free Streamlit Cloud deployment and uses only open-source Python libraries:
+        <code>streamlit</code>, <code>pandas</code>, and <code>openpyxl</code>.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
