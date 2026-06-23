@@ -5,14 +5,11 @@ from io import BytesIO
 import zipfile
 from pathlib import Path
 
-# -------------------------------------------
-# CONFIG
-# -------------------------------------------
-st.set_page_config(page_title="House Visit Dedupe Tool", layout="centered")
+st.set_page_config(
+    page_title="House Visit Data Quality Intelligence Platform (DQI)",
+    layout="wide"
+)
 
-# -------------------------------------------
-# SCHEMA DEFINITION
-# -------------------------------------------
 SCHEMA = {
     "Funder": "string",
     "COUNTRY": "string",
@@ -36,9 +33,15 @@ SCHEMA = {
     "YM Name": "string",
 }
 
-# -------------------------------------------
-# CLICKABLE LOGO FUNCTION
-# -------------------------------------------
+DEDUPE_KEY_COLS = [
+    "PROGRAM LAUNCH NAME",
+    "ProjectType",
+    "CHILD ID",
+    "TMO Name",
+    "YM Name",
+    "HOUSE VISIT DATE",
+]
+
 def clickable_logo(img_path, link_url, width=150):
     try:
         img_bytes = Path(img_path).read_bytes()
@@ -46,40 +49,30 @@ def clickable_logo(img_path, link_url, width=150):
         st.markdown(
             f"""
             <div style="text-align: center;">
-            <a href="{link_url}" target="_blank">
-                <img src="data:image/png;base64,{encoded}" width="{width}" />
-            </a>
+                <a href="{link_url}" target="_blank">
+                    <img src="data:image/png;base64,{encoded}" width="{width}" />
+                </a>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     except Exception:
         st.warning("Logo file not found. Please keep 'magicbus_logo.png' in the same folder.")
 
-# -------------------------------------------
-# REMOVE BLANK + FOOTER ROWS
-# -------------------------------------------
 def remove_footer_and_blank_rows(df: pd.DataFrame):
     df = df.copy()
-
-    # Drop completely empty rows
     df = df.dropna(how="all")
 
-    # Remove footer / metadata rows like "Applied filters"
     footer_mask = df.apply(
         lambda row: row.astype(str)
         .str.contains("Applied filters", case=False, na=False)
         .any(),
-        axis=1
+        axis=1,
     )
 
     df = df[~footer_mask]
-
     return df.reset_index(drop=True)
 
-# -------------------------------------------
-# APPLY SCHEMA TYPES
-# -------------------------------------------
 def apply_schema_types(df: pd.DataFrame):
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
@@ -93,11 +86,12 @@ def apply_schema_types(df: pd.DataFrame):
             df[col] = pd.to_datetime(
                 df[col],
                 errors="coerce",
-                dayfirst=True
+                dayfirst=True,
             ).dt.date
         else:
             df[col] = (
                 df[col]
+                .fillna("")
                 .astype(str)
                 .str.replace(r"\s+", " ", regex=True)
                 .str.replace(r"\.0$", "", regex=True)
@@ -106,79 +100,154 @@ def apply_schema_types(df: pd.DataFrame):
 
     return df
 
-# -------------------------------------------
-# DE-DUPE LOGIC
-# -------------------------------------------
-def process_housevisit_dedupe(df: pd.DataFrame):
-
-    # 1️ Clean footer & blank rows
+def process_housevisit_dqi(df: pd.DataFrame):
     df = remove_footer_and_blank_rows(df)
-
-    #  Apply schema
     df = apply_schema_types(df)
 
-    #  Build dedupe key (EXACT REQUIRED SEQUENCE)
-    df["COMBINED"] = (
-        df["HOUSE VISIT TYPE"] + " | " +
+    df["DQI_DUPLICATE_KEY"] = (
+        df["PROGRAM LAUNCH NAME"] + " | " +
+        df["ProjectType"] + " | " +
         df["CHILD ID"] + " | " +
-        df["HOUSE VISIT DATE"].astype(str) + " | " +
-        df["GROUP ID"] + " | " +
-        df["REMARKS"] + " | " +
-        df["HouseVisitID"] + " | " +
         df["TMO Name"] + " | " +
-        df["YM Name"]
+        df["YM Name"] + " | " +
+        df["HOUSE VISIT DATE"].astype(str)
     )
 
-    #  Identify duplicates
-    df["duplicat"] = df.groupby("COMBINED").cumcount()
+    df["Duplicate_Order"] = df.groupby("DQI_DUPLICATE_KEY").cumcount()
+    df["Duplicate_Group_Size"] = df.groupby("DQI_DUPLICATE_KEY")["DQI_DUPLICATE_KEY"].transform("count")
 
-    deduped = df[df["duplicat"] == 0].copy()
-    removed = df[df["duplicat"] > 0].copy()
+    # Required dichotomous variable
+    # 0 = Unique / first valid record
+    # 1 = Duplicate / repeated record
+    df["Duplicate"] = df["Duplicate_Order"].apply(lambda x: 1 if x > 0 else 0)
+
+    full_dataset = df.copy()
+    clean_dataset = df[df["Duplicate"] == 0].copy()
+    duplicate_dataset = df[df["Duplicate"] == 1].copy()
+
+    duplicate_summary = (
+        df[df["Duplicate_Group_Size"] > 1]
+        .groupby(DEDUPE_KEY_COLS, dropna=False)
+        .agg(
+            Duplicate_Group_Size=("DQI_DUPLICATE_KEY", "count"),
+            Duplicate_Removed=("Duplicate", "sum"),
+            HouseVisitID_List=("HouseVisitID", lambda x: ", ".join(x.astype(str))),
+            Remarks_List=("REMARKS", lambda x: " || ".join(x.astype(str).unique())),
+        )
+        .reset_index()
+        .sort_values("Duplicate_Group_Size", ascending=False)
+    )
 
     stats = {
         "rows_before": len(df),
-        "rows_after": len(deduped),
-        "removed": len(removed),
+        "clean_rows": len(clean_dataset),
+        "duplicate_rows": len(duplicate_dataset),
+        "duplicate_groups": len(duplicate_summary),
     }
 
-    # Write Excel outputs (in memory)
-    main_file = BytesIO()
-    with pd.ExcelWriter(main_file, engine="openpyxl") as writer:
-        deduped.to_excel(writer, index=False, sheet_name="Deduped")
-        removed.to_excel(writer, index=False, sheet_name="Duplicates_Only")
-    main_file.seek(0)
+    output_file = BytesIO()
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        full_dataset.to_excel(writer, index=False, sheet_name="Full_Data_With_Duplicate_Flag")
+        clean_dataset.to_excel(writer, index=False, sheet_name="Clean_Unique_Data")
+        duplicate_dataset.to_excel(writer, index=False, sheet_name="Duplicate_Only")
+        duplicate_summary.to_excel(writer, index=False, sheet_name="Duplicate_Summary")
 
-    removed_file = BytesIO()
-    with pd.ExcelWriter(removed_file, engine="openpyxl") as writer:
-        removed.to_excel(writer, index=False, sheet_name="Removed")
-    removed_file.seek(0)
+    output_file.seek(0)
 
-    return main_file, removed_file, stats
+    return full_dataset, clean_dataset, duplicate_dataset, duplicate_summary, output_file, stats
 
-# -------------------------------------------
-# STREAMLIT UI
-# -------------------------------------------
+def create_remarks_analysis(df: pd.DataFrame):
+    df = remove_footer_and_blank_rows(df)
+    df = apply_schema_types(df)
+
+    group_cols = [
+        "REGION",
+        "STATE",
+        "DISTRICT",
+        "PROGRAM LAUNCH NAME",
+        "Sub Type",
+    ]
+
+    df["REMARKS_CLEAN"] = (
+        df["REMARKS"]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+    )
+
+    df["REMARKS_STATUS"] = df["REMARKS_CLEAN"].apply(
+        lambda x: "Blank / Missing"
+        if x == "" or x.lower() in ["nan", "none"]
+        else "Available"
+    )
+
+    summary = (
+        df.groupby(group_cols, dropna=False)
+        .agg(
+            Total_Records=("CHILD ID", "count"),
+            Unique_Children=("CHILD ID", "nunique"),
+            Remarks_Available=("REMARKS_STATUS", lambda x: (x == "Available").sum()),
+            Remarks_Blank=("REMARKS_STATUS", lambda x: (x == "Blank / Missing").sum()),
+            Unique_Remarks=("REMARKS_CLEAN", "nunique"),
+        )
+        .reset_index()
+    )
+
+    summary["Remarks_Available_%"] = (
+        summary["Remarks_Available"] / summary["Total_Records"] * 100
+    ).round(1)
+
+    summary["Remarks_Blank_%"] = (
+        summary["Remarks_Blank"] / summary["Total_Records"] * 100
+    ).round(1)
+
+    top_remarks = (
+        df[df["REMARKS_STATUS"] == "Available"]
+        .groupby("REMARKS_CLEAN")
+        .size()
+        .reset_index(name="Count")
+        .sort_values("Count", ascending=False)
+    )
+
+    blank_remarks = df[df["REMARKS_STATUS"] == "Blank / Missing"].copy()
+
+    analysis_file = BytesIO()
+    with pd.ExcelWriter(analysis_file, engine="openpyxl") as writer:
+        summary.to_excel(writer, index=False, sheet_name="Remarks_Summary")
+        top_remarks.to_excel(writer, index=False, sheet_name="Top_Remarks")
+        blank_remarks.to_excel(writer, index=False, sheet_name="Blank_Remarks")
+
+    analysis_file.seek(0)
+
+    return summary, top_remarks, blank_remarks, analysis_file
+
 clickable_logo("magicbus_logo.png", "https://www.magicbus.org/", width=140)
 
-st.title("Duplicate House Visit Remover")
+st.title("House Visit Data Quality Intelligence Platform (DQI)")
 
 st.write("""
-This tool:
-• Removes duplicates using this exact sequence:
+This tool identifies duplicate House Visit records using:
 
-HOUSE VISIT TYPE - CHILD ID - HOUSE VISIT DATE - GROUP ID -  
-REMARKS - HouseVisitID - TMO Name - YM Name
+PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE
+
+It creates:
+1. Full dataset with Duplicate flag  
+2. Clean unique dataset only  
+3. Duplicate-only dataset  
+4. Duplicate summary  
+5. Remarks quality analysis  
 """)
 
 uploaded = st.file_uploader(
     "Upload House Visit Data File (.xlsx, .xls, .xlsm, .csv)",
-    type=["xlsx", "xls", "xlsm", "csv"]
+    type=["xlsx", "xls", "xlsm", "csv"],
 )
 
 if uploaded:
     st.success(f"File uploaded: **{uploaded.name}**")
 
-    if st.button("Run Tool"):
+    if st.button("Run DQI Tool"):
         try:
             file_name = uploaded.name.lower()
 
@@ -187,40 +256,65 @@ if uploaded:
             else:
                 df = pd.read_excel(uploaded)
 
-            main_xlsx, removed_xlsx, stats = process_housevisit_dedupe(df)
+            (
+                full_dataset,
+                clean_dataset,
+                duplicate_dataset,
+                duplicate_summary,
+                dqi_xlsx,
+                stats,
+            ) = process_housevisit_dqi(df)
+
+            remarks_summary, top_remarks, blank_remarks, remarks_xlsx = create_remarks_analysis(df)
 
             base_name = uploaded.name.rsplit(".", 1)[0]
-            dedup_name = f"{base_name}__dedup.xlsx"
-            removed_name = f"{base_name}_dupl_remove.xlsx"
-            zip_name = f"{base_name}_dedupe_bundle.zip"
+            dqi_name = f"{base_name}_DQI_Output.xlsx"
+            remarks_name = f"{base_name}_Remarks_Analysis.xlsx"
+            zip_name = f"{base_name}_DQI_Bundle.zip"
 
-            st.subheader("Summary")
-            st.write(f"- Total rows read: **{stats['rows_before']}**")
-            st.write(f"- After dedupe: **{stats['rows_after']}**")
-            st.write(f"- Duplicates removed: **{stats['removed']}**")
+            st.subheader("DQI Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Records", stats["rows_before"])
+            col2.metric("Clean Unique Records", stats["clean_rows"])
+            col3.metric("Duplicate Records", stats["duplicate_rows"])
+            col4.metric("Duplicate Groups", stats["duplicate_groups"])
+
+            st.subheader("Duplicate Summary")
+            st.dataframe(duplicate_summary.head(100), use_container_width=True)
+
+            st.subheader("Full Dataset with Duplicate Flag")
+            st.dataframe(full_dataset.head(100), use_container_width=True)
+
+            st.subheader("Clean Unique Dataset")
+            st.dataframe(clean_dataset.head(100), use_container_width=True)
+
+            st.subheader("Remarks Analysis")
+            st.dataframe(remarks_summary.head(100), use_container_width=True)
 
             st.download_button(
-                "Download Deduped File",
-                data=main_xlsx.getvalue(),
-                file_name=dedup_name,
+                "Download DQI Output Excel",
+                data=dqi_xlsx.getvalue(),
+                file_name=dqi_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
             st.download_button(
-                "Download Removed Rows File",
-                data=removed_xlsx.getvalue(),
-                file_name=removed_name,
+                "Download Remarks Analysis Excel",
+                data=remarks_xlsx.getvalue(),
+                file_name=remarks_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
             zip_buffer = BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr(dedup_name, main_xlsx.getvalue())
-                zf.writestr(removed_name, removed_xlsx.getvalue())
+                zf.writestr(dqi_name, dqi_xlsx.getvalue())
+                zf.writestr(remarks_name, remarks_xlsx.getvalue())
+
             zip_buffer.seek(0)
 
             st.download_button(
-                "Download BOTH Files (ZIP)",
+                "Download Complete DQI Bundle ZIP",
                 data=zip_buffer,
                 file_name=zip_name,
                 mime="application/zip",
