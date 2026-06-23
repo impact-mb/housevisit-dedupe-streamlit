@@ -19,7 +19,9 @@ Core modules
    - Funder-wise house visits
    - TMO-wise house visits
    - YM-wise house visits
-6. Remarks intelligence using clean unique data only:
+   - House Visit Type-wise visits
+6. Methodology / FAQ page explaining every KPI, dashboard section, and downloadable sheet.
+7. Remarks intelligence using clean unique data only:
    - Same remark repeated flag
    - Copy-paste score
    - Template detection
@@ -453,13 +455,14 @@ def render_labeled_bar_chart(data: pd.DataFrame, x_col: str, y_col: str, title: 
 
 
 def create_clean_summary(clean_dataset: pd.DataFrame):
-    """Create the five clean-data house visit summaries requested by the user."""
+    """Create clean-data house visit summaries for dashboard charts and Excel export."""
     return {
         "Region_Wise_House_Visits": make_summary_table(clean_dataset, "REGION", top_n=50),
         "State_Wise_House_Visits": make_summary_table(clean_dataset, "STATE", top_n=50),
         "Funder_Wise_House_Visits": make_summary_table(clean_dataset, "Funder", top_n=50),
         "TMO_Wise_House_Visits": make_summary_table(clean_dataset, "TMO Name", top_n=30),
         "YM_Wise_House_Visits": make_summary_table(clean_dataset, "YM Name", top_n=30),
+        "House_Visit_Type_Wise": make_summary_table(clean_dataset, "HOUSE VISIT TYPE", top_n=20),
     }
 
 
@@ -714,11 +717,12 @@ def create_excel_outputs(full_dataset, clean_dataset, duplicate_dataset, duplica
         clean_summary_tables["Funder_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="07_Funder_Summary")
         clean_summary_tables["TMO_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="08_TMO_Summary")
         clean_summary_tables["YM_Wise_House_Visits"].to_excel(writer, index=False, sheet_name="09_YM_Summary")
-        remarks_dataset.to_excel(writer, index=False, sheet_name="10_Remarks_Row_Level")
-        remarks_summary.to_excel(writer, index=False, sheet_name="11_Remarks_Summary")
-        ym_summary.to_excel(writer, index=False, sheet_name="12_YM_Leaderboard")
-        repeated_remarks.to_excel(writer, index=False, sheet_name="13_Repeated_Remarks")
-        theme_summary.to_excel(writer, index=False, sheet_name="14_Theme_Summary")
+        clean_summary_tables["House_Visit_Type_Wise"].to_excel(writer, index=False, sheet_name="10_HV_Type_Summary")
+        remarks_dataset.to_excel(writer, index=False, sheet_name="11_Remarks_Row_Level")
+        remarks_summary.to_excel(writer, index=False, sheet_name="12_Remarks_Summary")
+        ym_summary.to_excel(writer, index=False, sheet_name="13_YM_Leaderboard")
+        repeated_remarks.to_excel(writer, index=False, sheet_name="14_Repeated_Remarks")
+        theme_summary.to_excel(writer, index=False, sheet_name="15_Theme_Summary")
     output_file.seek(0)
     return output_file
 
@@ -779,6 +783,7 @@ st.markdown("---")
 st.markdown(
     """
     <div class="section-card">
+    <b>Data privacy note:</b> This app does not store uploaded data in any database or permanent storage. The uploaded file is processed temporarily in the running Streamlit session/runtime to generate the dashboard and downloadable reports. Once the session ends or the app reruns, the app does not retain your dataset.<br><br>
     <b>How to read this dashboard:</b><br>
     Duplicate records are identified first and removed from the clean dataset. Clean-data summaries and remarks intelligence are calculated only on the <b>Clean Unique Dataset</b>. Same Remark Repeated, Template-like Remarks, AI/Prompt Copy, and Blank Remarks are overlapping quality flags and should not be added together.
     </div>
@@ -842,16 +847,17 @@ if uploaded:
             output_name = f"{base_name}_DQI_Intelligence_Output.xlsx"
             zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "Executive Summary",
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "Leadership Overview",
                 "Clean Data Summary",
                 "Duplicate Intelligence",
                 "Remarks Intelligence",
+                "Methodology / FAQ",
                 "Downloads",
             ])
 
             with tab1:
-                st.subheader("CXO Summary")
+                st.subheader("Leadership Data Quality Overview")
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Total Records Uploaded", f"{total_records:,}")
                 k2.metric("Clean Unique House Visits", f"{clean_records:,}")
@@ -920,8 +926,12 @@ if uploaded:
                 st.markdown("### Top YM-wise house visits")
                 render_labeled_bar_chart(clean_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", "Top YM-wise house visits", orientation="h")
 
+                st.markdown("### House Visit Type-wise visits")
+                st.caption("This chart shows whether house visits are regular, irregular, issue-based, or any other type available in the HOUSE VISIT TYPE field.")
+                render_labeled_bar_chart(clean_summary_tables["House_Visit_Type_Wise"], "HOUSE VISIT TYPE", "House Visits", "House Visit Type-wise house visits", orientation="h")
+
                 st.markdown("### Summary Tables")
-                table_tab1, table_tab2, table_tab3, table_tab4, table_tab5 = st.tabs(["Region", "State", "Funder", "TMO", "YM"])
+                table_tab1, table_tab2, table_tab3, table_tab4, table_tab5, table_tab6 = st.tabs(["Region", "State", "Funder", "TMO", "YM", "House Visit Type"])
                 with table_tab1:
                     st.dataframe(clean_summary_tables["Region_Wise_House_Visits"], use_container_width=True, hide_index=True)
                 with table_tab2:
@@ -932,6 +942,8 @@ if uploaded:
                     st.dataframe(clean_summary_tables["TMO_Wise_House_Visits"], use_container_width=True, hide_index=True)
                 with table_tab5:
                     st.dataframe(clean_summary_tables["YM_Wise_House_Visits"], use_container_width=True, hide_index=True)
+                with table_tab6:
+                    st.dataframe(clean_summary_tables["House_Visit_Type_Wise"], use_container_width=True, hide_index=True)
 
             with tab3:
                 st.subheader("Duplicate Intelligence")
@@ -977,6 +989,70 @@ if uploaded:
                 st.dataframe(remarks_dataset[row_cols].head(300), use_container_width=True, hide_index=True)
 
             with tab5:
+                st.subheader("Methodology / FAQ")
+                st.markdown("""
+                ### Data privacy / storage
+                The app does not save uploaded files to a database or permanent folder. Your file is processed temporarily in the active Streamlit session/runtime to create the dashboard and Excel output. The app is providing a running space for analysis, not a data storage system.
+
+                ### Quality Risk Snapshot
+                This table converts important data-quality rates into a simple review band. Currently, the rule is: **0–20% = Low**, **21–50% = Watch**, and **above 50% = High**. The rates shown are duplicate rate, same remark repeated rate, template-like remark rate, possible AI/prompt-copy rate, and blank remark rate. These are operational review signals, not final audit conclusions.
+
+                ### Top Themes
+                Top Themes are generated from clean unique remarks using keyword mapping. For example, words like `exam`, `study`, and `academic` are mapped to Education / Exam Readiness; words like `kitchen garden`, `study corner`, `digital`, `career`, and `parents` are mapped to respective intervention themes. One remark can have multiple themes.
+
+                ### Total Records Uploaded
+                This is the total number of rows read after removing completely blank rows and Power BI footer rows such as Applied Filters. It represents the raw usable input volume before duplicate removal.
+
+                ### Clean Unique House Visits
+                This is the retained dataset after duplicate removal. One record is retained for each duplicate business key. This is the main denominator used for clean-data charts and remarks intelligence.
+
+                ### Duplicate Records Removed
+                These are repeated records after the first record within the same duplicate key. Duplicate percentage = Duplicate Records Removed / Total Records Uploaded × 100.
+
+                ### Remarks Quality Base
+                Remarks Quality Base is equal to Clean Unique House Visits. Remarks analysis is intentionally done on clean data only so duplicate rows do not inflate copy-paste or template metrics.
+
+                ### Same Remark Repeated
+                This flags records where the exact same cleaned remark is reused within the same operational context: PROGRAM LAUNCH NAME + Sub Type + HOUSE VISIT TYPE + TMO Name + YM Name. This is the copy-paste signal. It is calculated as a count and as % of clean data.
+
+                ### Template-like Remarks
+                This is a rule-based flag. A remark is marked as template-like when it has signals such as common opening phrases, generic programme phrases, multiple standard intervention keywords, long structured wording, or possible prompt-copy phrases. This can overlap with Same Remark Repeated.
+
+                ### Possible AI / Prompt Copy
+                This catches obvious prompt-copy artefacts such as `Here is an improved version`, `additional relevant line`, `ChatGPT`, `draft`, or similar wording. It is a strong review signal because such text usually should not appear in field remarks.
+
+                ### Blank Remarks
+                This counts clean unique house visit records where remarks are blank, missing, or equivalent to null-like values.
+
+                ### Duplicate Intelligence
+                Duplicate Intelligence uses this key: PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE. The first record in a key is retained as unique; repeated rows in the same key are marked Duplicate = 1.
+
+                ### Remarks Intelligence
+                Remarks Intelligence is calculated on clean unique data only. It gives row-level flags, geography/program summaries, YM-level review metrics, repeated remarks, and theme summaries. Same Remark Repeated, Template-like Remarks, Possible AI/Prompt Copy, and Blank Remarks are overlapping flags, so they should not be added together.
+
+                ### Download Reports
+                The Excel output contains multiple sheets explained below.
+
+                | Sheet | Meaning |
+                |---|---|
+                | 01_Full_Data_Duplicate_Flag | Full cleaned input with Duplicate = 0/1, duplicate key, duplicate order, and group size. |
+                | 02_Clean_Unique_Data | Final unique house visit dataset after removing duplicates. |
+                | 03_Duplicate_Only | Rows removed as duplicates. |
+                | 04_Duplicate_Summary | Duplicate groups with record count, removed count, HouseVisitID list, and sample remarks. |
+                | 05_Region_Summary | Clean unique house visit count by Region. |
+                | 06_State_Summary | Clean unique house visit count by State. |
+                | 07_Funder_Summary | Clean unique house visit count by Funder. |
+                | 08_TMO_Summary | Clean unique house visit count by TMO. |
+                | 09_YM_Summary | Clean unique house visit count by YM. |
+                | 10_HV_Type_Summary | Clean unique house visit count by HOUSE VISIT TYPE, such as regular, irregular, or issue-based. |
+                | 11_Remarks_Row_Level | Row-level remarks intelligence with repeated remark flag, template flag, AI/prompt flag, themes, word count, and quality band. |
+                | 12_Remarks_Summary | Remarks quality summary by Region, State, District, Program, and Sub Type. |
+                | 13_YM_Leaderboard | YM/TMO-level review table showing copy-paste score, template score, blank remarks, and average word count. |
+                | 14_Repeated_Remarks | Exact repeated remarks by operational context, with reuse count and child count. |
+                | 15_Theme_Summary | Theme-level summary showing which field topics appear most often. |
+                """)
+
+            with tab6:
                 st.subheader("Download Reports")
                 st.download_button(
                     "Download Complete DQI Intelligence Excel",
@@ -1009,11 +1085,12 @@ if uploaded:
                     07_Funder_Summary  
                     08_TMO_Summary  
                     09_YM_Summary  
-                    10_Remarks_Row_Level  
-                    11_Remarks_Summary  
-                    12_YM_Leaderboard  
-                    13_Repeated_Remarks  
-                    14_Theme_Summary
+                    10_HV_Type_Summary  
+                    11_Remarks_Row_Level  
+                    12_Remarks_Summary  
+                    13_YM_Leaderboard  
+                    14_Repeated_Remarks  
+                    15_Theme_Summary
                     """
                 )
 
@@ -1024,6 +1101,7 @@ else:
         """
         <div class="section-card">
         <b>Upload a House Visit file to begin.</b><br>
+        <b>Data privacy note:</b> The app does not store your uploaded dataset permanently. It processes the file temporarily in the running Streamlit session/runtime and provides downloadable outputs.<br><br>
         This app is designed for free Streamlit Cloud deployment and uses only open-source Python libraries:
         <code>streamlit</code>, <code>pandas</code>, <code>openpyxl</code>, and <code>plotly</code>.
         </div>
