@@ -1,145 +1,41 @@
 ##############################
-
 # House Visit Data Quality Intelligence Platform (DQI)
-
-# Requirements File
-
-#
-
-# Purpose:
-
-# - Streamlit web application
-
-# - Duplicate Intelligence
-
-# - Remarks Intelligence
-
-# - CXO Dashboard
-
-# - Interactive Charts
-
-# - PDF Export
-
-# - Data Quality Monitoring
-
-#
-
-# Deployment:
-
-# - GitHub
-
-# - Streamlit Community Cloud
-
 ##############################
 
 ##############################
-
 # Core App Dependencies
-
 ##############################
-
-# Web application framework
-
 streamlit>=1.32.0
 
 ##############################
-
 # Data Processing
-
 ##############################
-
-# Data manipulation
-
 pandas>=2.0.0
-
-
-# Numerical calculations
-
 numpy>=1.24.0
-
-# Date handling
-
 python-dateutil>=2.8.2
 
 ##############################
-
 # Excel Processing
-
 ##############################
-
-# Excel read/write engine
-
 openpyxl>=3.1.0
 
 ##############################
-
 # Interactive Visualizations
-
 ##############################
-
-# Interactive charts
-
 plotly>=5.18.0
-matplotlib>=3.8.0
 
 ##############################
-
 # Text Intelligence
-
 ##############################
-
-# Fast text similarity matching
-
 rapidfuzz>=3.9.0
 
 ##############################
-
 # PDF Export
-
 ##############################
-
-# Export dashboard charts into PDF
-
 reportlab>=4.0.0
 
 ##############################
-
-# Optional Future AI Layer
-
+# No Matplotlib
 ##############################
-
-# Uncomment if AI summarization is added
-
-# scikit-learn>=1.4.0
-
-# nltk>=3.8.1
-
-##############################
-
-# Streamlit Deployment Notes
-
-##############################
-
-# Streamlit Cloud installs these automatically.
-
-# If version conflicts happen:
-
-# - Remove version pins
-
-# - Or tighten versions
-
-# Example:
-
-# streamlit==1.32.0
-
-##############################
-
-# Last Updated
-
-##############################
-
-# House Visit DQI v3
-
-# Maintainer: Magic Bus Data Team
-
-##############################
+# This app intentionally does NOT use matplotlib.
+# All dashboard visuals are Plotly; PDF is generated with ReportLab.

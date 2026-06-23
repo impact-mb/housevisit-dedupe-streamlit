@@ -1,37 +1,30 @@
-# housevisit-dedupe-streamlit
+# House Visit Data Quality Intelligence Platform (DQI)
 
-House Visit Dedupe Tool (Streamlit Web App)
+Magic Bus internal Streamlit app for House Visit duplicate detection, clean-data summaries, remarks intelligence, and downloadable data quality reports.
 
-A simple and fast web-based House Visit duplicate remover built using Python + Streamlit.
-Anyone can upload their Excel file and instantly get:
-  A deduped Excel file (keeps only 1st occurrence)
-  A separate file of removed duplicates (for audit)
-  Zero installation — works fully in browser
-  Safe, local processing — file never leaves your browser session
+## Deployment
 
-Features
-  Upload any .xlsx House Visit file
-  Automatically checks duplicates using key fields:
-      CHILD ID
-      HOUSE VISIT DATE
-      VISIT DATE
-      GROUP ID
-      TMO Name
-      YM Name
+Deploy on Streamlit Community Cloud using `app.py` as the entry point.
 
-Generates two Excel files:
-  filename__dedup.xlsx → Cleaned file
-  filename_dupl_remove.xlsx → All removed rows
+## Secrets
 
-No login, no coding — 100% browser-based
-Works on mobile, laptop, or tablet
-Ideal for multi-state teams needing quick data fixes
+Configure Streamlit secrets:
 
-How It Works
+```toml
+[auth]
+username = "north_admin"
+password = "Magic@1234"
+```
 
-User uploads an Excel file
-  System cleans & standardizes key columns
-  A COMBINED key is created for each row
-  Duplicates are detected using groupby().cumcount()
-  First row is kept, the rest are moved to “removed” sheet
-  Two downloadable Excel files are returned
+## Architecture
+
+- `app.py` - main orchestrator
+- `dqi/auth.py` - login/logout
+- `dqi/config.py` - schema, rules, constants
+- `dqi/processor.py` - cleaning and duplicate engine
+- `dqi/remarks.py` - remarks intelligence
+- `dqi/charts.py` - Plotly chart helpers
+- `dqi/spatial.py` - India map / spatial analysis
+- `dqi/exporter.py` - Excel, PDF, ZIP exports
+- `dqi/faq.py` - methodology / FAQ
+- `dqi/ui.py` - dashboard UI
