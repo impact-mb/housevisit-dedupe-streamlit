@@ -52,6 +52,7 @@ streamlit>=1.32.0
 
 pandas>=2.0.0
 
+
 # Numerical calculations
 
 numpy>=1.24.0
@@ -79,6 +80,7 @@ openpyxl>=3.1.0
 # Interactive charts
 
 plotly>=5.18.0
+matplotlib>=3.8.0
 
 ##############################
 
