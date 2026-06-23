@@ -418,6 +418,10 @@ def render_india_state_map(state_summary: pd.DataFrame):
     - State-wise data table for export/review.
     """
     st.subheader("Spatial Data Analysis")
+    st.info(
+        "This is temporary session-based analysis. The map and numbers shown here are based only on "
+        "the CSV/XLSX file currently uploaded/imported in this session. The app does not store this data permanently."
+    )
     st.caption(
         "Full India map is shown by default. States/UTs with data are highlighted with colour; "
         "states/UTs without data remain grey. Labels show State/UT names and values where data exists."
@@ -443,17 +447,22 @@ def render_india_state_map(state_summary: pd.DataFrame):
     c1, c2 = st.columns([1.2, 1])
     with c1:
         st.markdown("### State/UT-wise House Visit Table")
+        st.caption("Only States/UTs with data in the uploaded file are shown in this table.")
+        active_table = active_df[["State / UT", "House Visits"]].sort_values("House Visits", ascending=False).copy()
         st.dataframe(
-            full_df[["State / UT", "House Visits", "Presence"]].sort_values("House Visits", ascending=False),
+            active_table,
             use_container_width=True,
             hide_index=True,
         )
     with c2:
         st.markdown("### Active Presence Summary")
-        st.write(f"**States/UTs with data:** {len(active_df):,}")
-        st.write(f"**States/UTs without data:** {len(inactive_df):,}")
-        st.write(f"**Total house visits on map:** {int(full_df['House Visits'].sum()):,}")
-        st.info("Use the table to confirm exact state names and house visit totals.")
+        st.write(f"**States/UTs with data in uploaded file:** {len(active_df):,}")
+        st.write(f"**States/UTs without data in uploaded file:** {len(inactive_df):,}")
+        st.write(f"**Total house visits in uploaded file:** {int(full_df['House Visits'].sum()):,}")
+        st.info(
+            "This table and map reflect only the file uploaded in the current session. "
+            "States/UTs without uploaded data are visible on the map but excluded from the table."
+        )
 
     st.markdown("### Ranked States/UTs with Data")
     if active_df.empty:
