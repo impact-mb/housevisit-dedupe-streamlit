@@ -18,6 +18,96 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+
+# ============================================================
+# LOGIN CONFIG - USE STREAMLIT SECRETS FOR WEB DEPLOYMENT
+# ============================================================
+def get_login_credentials():
+    """
+    Reads login credentials from Streamlit secrets.
+    For Streamlit Cloud, add these secrets in App settings:
+
+    [auth]
+    username = "north_admin"
+    password = "Magic@1234"
+    """
+    try:
+        username = st.secrets["auth"]["username"]
+        password = st.secrets["auth"]["password"]
+        return username, password
+    except Exception:
+        return None, None
+
+
+def render_login_page():
+    st.markdown(
+        """
+        <style>
+            .login-title {
+                text-align: center;
+                font-size: 30px;
+                font-weight: 800;
+                color: #1f2937;
+                margin-top: 40px;
+                margin-bottom: 5px;
+            }
+            .login-subtitle {
+                text-align: center;
+                font-size: 15px;
+                color: #6b7280;
+                margin-bottom: 28px;
+            }
+            .login-warning {
+                background: #fff7e6;
+                border-left: 6px solid #f59e0b;
+                border-radius: 12px;
+                padding: 14px 16px;
+                margin-top: 15px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="login-title">House Visit Data Quality Intelligence Platform (DQI)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Secure Access Layer</div>', unsafe_allow_html=True)
+
+    expected_username, expected_password = get_login_credentials()
+
+    if not expected_username or not expected_password:
+        st.markdown(
+            """
+            <div class="login-warning">
+                <b>Login secrets are not configured.</b><br>
+                Add credentials in <code>.streamlit/secrets.toml</code> for local use or in Streamlit Cloud secrets for web deployment.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.stop()
+
+    col_left, col_mid, col_right = st.columns([1, 1.2, 1])
+    with col_mid:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
+
+            if submitted:
+                if username == expected_username and password == expected_password:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    render_login_page()
+    st.stop()
+
 # ============================================================
 # CSS - CXO FRIENDLY UI
 # ============================================================
@@ -604,6 +694,12 @@ def get_risk_label(rate):
 # HEADER
 # ============================================================
 clickable_logo("magicbus_logo.png", "https://www.magicbus.org/", width=130)
+
+logout_col1, logout_col2 = st.columns([8, 1])
+with logout_col2:
+    if st.button("Logout", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 today = datetime.now().strftime("%d %b %Y")
 quote = SPORTS_QUOTES[datetime.now().day % len(SPORTS_QUOTES)]
