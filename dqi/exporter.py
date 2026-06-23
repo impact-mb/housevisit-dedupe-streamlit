@@ -16,6 +16,7 @@ Version:
 """
 
 import zipfile
+from datetime import datetime
 from io import BytesIO
 import pandas as pd
 from reportlab.lib import colors
@@ -70,8 +71,18 @@ def _summary_table_for_pdf(df: pd.DataFrame, name_col: str, value_col: str, titl
     return table
 
 
-def create_clean_summary_pdf(clean_summary_tables: dict) -> BytesIO:
-    """Create a ReportLab PDF containing all Clean Data Summary tables."""
+def create_clean_summary_pdf(clean_summary_tables: dict, report_date: str | None = None) -> BytesIO:
+    """Create a ReportLab PDF containing all Clean Data Summary tables.
+
+    Parameters
+    ----------
+    clean_summary_tables:
+        Dictionary of clean-data summary DataFrames.
+    report_date:
+        Date label shown in the PDF header. If not supplied, the server date is used.
+    """
+    if report_date is None:
+        report_date = datetime.now().strftime("%d %b %Y")
     pdf_buffer = BytesIO()
     doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4), rightMargin=28, leftMargin=28, topMargin=28, bottomMargin=24)
     styles = getSampleStyleSheet()
@@ -79,6 +90,7 @@ def create_clean_summary_pdf(clean_summary_tables: dict) -> BytesIO:
 
     story.append(Paragraph("House Visit Data Quality Intelligence Platform (DQI)", styles["Title"]))
     story.append(Paragraph("Clean Data Summary After Deduplication", styles["Heading2"]))
+    story.append(Paragraph(f"Report Date: {report_date}", styles["BodyText"]))
     story.append(Paragraph("This PDF uses clean unique house visits only. It is generated with ReportLab and does not use Matplotlib.", styles["BodyText"]))
     story.append(Spacer(1, 14))
 

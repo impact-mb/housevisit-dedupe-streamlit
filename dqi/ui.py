@@ -235,10 +235,10 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
 
     with tab7:
         st.subheader("Download Reports")
-        st.download_button("Download Complete DQI Intelligence Excel", data=output_xlsx.getvalue(), file_name=output_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        st.download_button("Download Clean Data Summary Report PDF", data=charts_pdf.getvalue(), file_name=charts_pdf_name, mime="application/pdf")
+        st.download_button("Download Complete DQI Intelligence Excel", data=output_xlsx.getvalue(), file_name=output_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click="ignore", key="download_excel")
+        st.download_button("Download Clean Data Summary Report PDF", data=charts_pdf.getvalue(), file_name=charts_pdf_name, mime="application/pdf", on_click="ignore", key="download_pdf")
         zip_buffer = create_zip_bundle({output_name: output_xlsx.getvalue(), charts_pdf_name: charts_pdf.getvalue()})
-        st.download_button("Download ZIP Bundle", data=zip_buffer.getvalue(), file_name=zip_name, mime="application/zip")
+        st.download_button("Download ZIP Bundle", data=zip_buffer.getvalue(), file_name=zip_name, mime="application/zip", on_click="ignore", key="download_zip")
         st.markdown("### Excel sheets included")
         st.dataframe(excel_sheet_explanation_df(), use_container_width=True, hide_index=True)
 

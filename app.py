@@ -22,6 +22,8 @@ Designed for Streamlit Community Cloud using open-source packages.
 No Matplotlib is used.
 """
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -49,11 +51,26 @@ uploaded = st.file_uploader(
     type=["xlsx", "xls", "xlsm", "csv"],
 )
 
+# Session-state storage keeps the analysed dashboard visible after widget reruns.
+# This is important on Streamlit Cloud because users may download reports directly online
+# without being able to test locally.
+if "dqi_result" not in st.session_state:
+    st.session_state["dqi_result"] = None
+if "dqi_file_key" not in st.session_state:
+    st.session_state["dqi_file_key"] = None
+
 if uploaded:
     st.success(f"File uploaded: **{uploaded.name}**")
+    uploaded_size = getattr(uploaded, "size", None)
+    file_key = f"{uploaded.name}_{uploaded_size}"
+
+    # If a different file is uploaded, clear the previous analysis.
+    if st.session_state["dqi_file_key"] not in (None, file_key):
+        st.session_state["dqi_result"] = None
 
     if st.button("Run DQI Analysis", type="primary"):
         try:
+            report_date = datetime.now().strftime("%d %b %Y")
             file_name = uploaded.name.lower()
             if file_name.endswith(".csv"):
                 raw_df = pd.read_csv(uploaded)
@@ -79,24 +96,45 @@ if uploaded:
                 repeated_remarks,
                 theme_summary,
             )
-            charts_pdf = create_clean_summary_pdf(clean_summary_tables)
+            charts_pdf = create_clean_summary_pdf(clean_summary_tables, report_date=report_date)
 
-            render_dashboard(
-                full_dataset,
-                clean_dataset,
-                duplicate_dataset,
-                duplicate_summary,
-                clean_summary_tables,
-                remarks_dataset,
-                remarks_summary,
-                ym_summary,
-                repeated_remarks,
-                theme_summary,
-                output_xlsx,
-                charts_pdf,
-                uploaded.name,
-            )
+            st.session_state["dqi_file_key"] = file_key
+            st.session_state["dqi_result"] = {
+                "full_dataset": full_dataset,
+                "clean_dataset": clean_dataset,
+                "duplicate_dataset": duplicate_dataset,
+                "duplicate_summary": duplicate_summary,
+                "clean_summary_tables": clean_summary_tables,
+                "remarks_dataset": remarks_dataset,
+                "remarks_summary": remarks_summary,
+                "ym_summary": ym_summary,
+                "repeated_remarks": repeated_remarks,
+                "theme_summary": theme_summary,
+                "output_xlsx": output_xlsx,
+                "charts_pdf": charts_pdf,
+                "uploaded_name": uploaded.name,
+            }
         except Exception as exc:
             st.error(f"Error: {exc}")
+
+    if st.session_state["dqi_result"] is not None and st.session_state["dqi_file_key"] == file_key:
+        result = st.session_state["dqi_result"]
+        render_dashboard(
+            result["full_dataset"],
+            result["clean_dataset"],
+            result["duplicate_dataset"],
+            result["duplicate_summary"],
+            result["clean_summary_tables"],
+            result["remarks_dataset"],
+            result["remarks_summary"],
+            result["ym_summary"],
+            result["repeated_remarks"],
+            result["theme_summary"],
+            result["output_xlsx"],
+            result["charts_pdf"],
+            result["uploaded_name"],
+        )
 else:
+    st.session_state["dqi_result"] = None
+    st.session_state["dqi_file_key"] = None
     render_upload_prompt()
