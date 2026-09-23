@@ -11,10 +11,11 @@ Magic Bus Data Team
 
 Version:
 --------
-2.0.0
+2.1.0
 """
 
 import base64
+from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -103,6 +104,87 @@ def get_risk_label(rate: float) -> str:
         return "Watch"
     return "High"
 
+
+
+
+def dataframe_to_excel_bytes(
+    dataframe: pd.DataFrame,
+    sheet_name: str = "Data",
+) -> bytes:
+    """Return one DataFrame as an in-memory Excel workbook."""
+    output = BytesIO()
+
+    safe_sheet_name = (
+        str(sheet_name)
+        .replace("/", "-")
+        .replace("\\", "-")
+        .replace("*", "-")
+        .replace("?", "-")
+        .replace(":", "-")
+        .replace("[", "(")
+        .replace("]", ")")
+    )[:31] or "Data"
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl",
+    ) as writer:
+        dataframe.to_excel(
+            writer,
+            sheet_name=safe_sheet_name,
+            index=False,
+        )
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def render_data_exports(
+    dataframe: pd.DataFrame,
+    file_stub: str,
+    key_prefix: str,
+    sheet_name: str = "Data",
+    label: str = "Export chart data",
+):
+    """Render CSV and Excel download buttons for the supplied DataFrame."""
+    if dataframe is None or dataframe.empty:
+        st.caption("No data available to export for this section.")
+        return
+
+    st.caption(label)
+
+    csv_bytes = dataframe.to_csv(
+        index=False
+    ).encode("utf-8-sig")
+
+    excel_bytes = dataframe_to_excel_bytes(
+        dataframe,
+        sheet_name=sheet_name,
+    )
+
+    e1, e2 = st.columns(2)
+
+    with e1:
+        st.download_button(
+            "Download CSV",
+            data=csv_bytes,
+            file_name=f"{file_stub}.csv",
+            mime="text/csv",
+            on_click="ignore",
+            key=f"{key_prefix}_csv",
+            use_container_width=True,
+        )
+
+    with e2:
+        st.download_button(
+            "Download Excel",
+            data=excel_bytes,
+            file_name=f"{file_stub}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            on_click="ignore",
+            key=f"{key_prefix}_xlsx",
+            use_container_width=True,
+        )
 
 
 def build_unique_children_dataset(clean_dataset: pd.DataFrame) -> pd.DataFrame:
@@ -366,25 +448,128 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
         if filtered_clean.empty:
             st.warning("No records match the selected filters. Please change or clear one or more filters.")
         else:
-            render_chart_box("1. House Visit Type-wise visits", "Distribution by HOUSE VISIT TYPE for the selected filters.", "pie", filtered_summary_tables["House_Visit_Type_Wise"], "HOUSE VISIT TYPE", "House Visits")
+            render_chart_box(
+                "1. House Visit Type-wise visits",
+                "Distribution by HOUSE VISIT TYPE for the selected filters.",
+                "pie",
+                filtered_summary_tables["House_Visit_Type_Wise"],
+                "HOUSE VISIT TYPE",
+                "House Visits",
+            )
+            render_data_exports(
+                filtered_summary_tables["House_Visit_Type_Wise"],
+                f"{base_name}_CleanSummary_HouseVisitType",
+                "clean_summary_hv_type",
+                sheet_name="House Visit Type",
+            )
             c1, c2 = st.columns(2)
             with c1:
-                render_chart_box("2. Region-wise house visits", "Clean unique house visits by region for the selected filters.", "bar", filtered_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", orientation="v")
+                render_chart_box(
+                    "2. Region-wise house visits",
+                    "Clean unique house visits by region for the selected filters.",
+                    "bar",
+                    filtered_summary_tables["Region_Wise_House_Visits"],
+                    "REGION",
+                    "House Visits",
+                    orientation="v",
+                )
+                render_data_exports(
+                    filtered_summary_tables["Region_Wise_House_Visits"],
+                    f"{base_name}_CleanSummary_Region",
+                    "clean_summary_region",
+                    sheet_name="Region",
+                )
             with c2:
-                render_chart_box("3. State-wise house visits", "Clean unique house visits by state for the selected filters.", "bar", filtered_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", orientation="h")
+                render_chart_box(
+                    "3. State-wise house visits",
+                    "Clean unique house visits by state for the selected filters.",
+                    "bar",
+                    filtered_summary_tables["State_Wise_House_Visits"],
+                    "STATE",
+                    "House Visits",
+                    orientation="h",
+                )
+                render_data_exports(
+                    filtered_summary_tables["State_Wise_House_Visits"],
+                    f"{base_name}_CleanSummary_State",
+                    "clean_summary_state",
+                    sheet_name="State",
+                )
             c3, c4 = st.columns(2)
             with c3:
-                render_chart_box("4. Funder-wise house visits", "Clean unique house visits by funder for the selected filters.", "bar", filtered_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", orientation="h")
+                render_chart_box(
+                    "4. Funder-wise house visits",
+                    "Clean unique house visits by funder for the selected filters.",
+                    "bar",
+                    filtered_summary_tables["Funder_Wise_House_Visits"],
+                    "Funder",
+                    "House Visits",
+                    orientation="h",
+                )
+                render_data_exports(
+                    filtered_summary_tables["Funder_Wise_House_Visits"],
+                    f"{base_name}_CleanSummary_Funder",
+                    "clean_summary_funder",
+                    sheet_name="Funder",
+                )
             with c4:
-                render_chart_box("5. TMO-wise house visits", "Top TMO-wise house visit volume for the selected filters.", "bar", filtered_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", orientation="h")
-            render_chart_box("6. YM-wise house visits", "Top YM-wise house visit volume for the selected filters.", "bar", filtered_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", orientation="h")
+                render_chart_box(
+                    "5. TMO-wise house visits",
+                    "Top TMO-wise house visit volume for the selected filters.",
+                    "bar",
+                    filtered_summary_tables["TMO_Wise_House_Visits"],
+                    "TMO Name",
+                    "House Visits",
+                    orientation="h",
+                )
+                render_data_exports(
+                    filtered_summary_tables["TMO_Wise_House_Visits"],
+                    f"{base_name}_CleanSummary_TMO",
+                    "clean_summary_tmo",
+                    sheet_name="TMO",
+                )
+            render_chart_box(
+                "6. YM-wise house visits",
+                "Top YM-wise house visit volume for the selected filters.",
+                "bar",
+                filtered_summary_tables["YM_Wise_House_Visits"],
+                "YM Name",
+                "House Visits",
+                orientation="h",
+            )
+            render_data_exports(
+                filtered_summary_tables["YM_Wise_House_Visits"],
+                f"{base_name}_CleanSummary_YM",
+                "clean_summary_ym",
+                sheet_name="YM",
+            )
+
+            st.markdown("### Filtered Clean Dataset")
+            render_data_exports(
+                filtered_clean,
+                f"{base_name}_Filtered_Clean_Data",
+                "clean_summary_filtered_dataset",
+                sheet_name="Filtered Clean Data",
+                label="Export the complete clean dataset for the currently selected filters.",
+            )
 
             st.markdown("### Summary Tables")
             labels = [("House Visit Type", "House_Visit_Type_Wise"), ("Region", "Region_Wise_House_Visits"), ("State", "State_Wise_House_Visits"), ("Funder", "Funder_Wise_House_Visits"), ("TMO", "TMO_Wise_House_Visits"), ("YM", "YM_Wise_House_Visits")]
             table_tabs = st.tabs([x[0] for x in labels])
             for t, (_, key) in zip(table_tabs, labels):
                 with t:
-                    st.dataframe(filtered_summary_tables[key], use_container_width=True, hide_index=True)
+                    st.dataframe(
+                        filtered_summary_tables[key],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    render_data_exports(
+                        filtered_summary_tables[key],
+                        f"{base_name}_CleanSummary_{key}",
+                        f"clean_summary_table_{key}",
+                        sheet_name=key[:31],
+                        label="Export this summary table.",
+                    )
 
 
     with tab3:
@@ -577,6 +762,15 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                     "House Visits",
                     orientation="v",
                 )
+                region_export = unique_region_summary.rename(
+                    columns={"House Visits": "Unique Children"}
+                )
+                render_data_exports(
+                    region_export,
+                    f"{base_name}_UniqueChildren_Region",
+                    "unique_children_region",
+                    sheet_name="Region",
+                )
 
             with c2:
                 render_chart_box(
@@ -587,6 +781,15 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                     "STATE",
                     "House Visits",
                     orientation="h",
+                )
+                state_export = unique_state_summary.rename(
+                    columns={"House Visits": "Unique Children"}
+                )
+                render_data_exports(
+                    state_export,
+                    f"{base_name}_UniqueChildren_State",
+                    "unique_children_state",
+                    sheet_name="State",
                 )
 
             c3, c4 = st.columns(2)
@@ -601,6 +804,15 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                     "House Visits",
                     orientation="h",
                 )
+                funder_export = unique_funder_summary.rename(
+                    columns={"House Visits": "Unique Children"}
+                )
+                render_data_exports(
+                    funder_export,
+                    f"{base_name}_UniqueChildren_Funder",
+                    "unique_children_funder",
+                    sheet_name="Funder",
+                )
 
             with c4:
                 render_chart_box(
@@ -611,6 +823,15 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                     "PROGRAM LAUNCH NAME",
                     "House Visits",
                     orientation="h",
+                )
+                program_export = unique_program_summary.rename(
+                    columns={"House Visits": "Unique Children"}
+                )
+                render_data_exports(
+                    program_export,
+                    f"{base_name}_UniqueChildren_ProgramLaunch",
+                    "unique_children_program",
+                    sheet_name="Program Launch",
                 )
 
             # Rename metric column for this page so users do not
@@ -636,17 +857,12 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                 hide_index=True,
             )
 
-            csv_bytes = filtered_unique.to_csv(
-                index=False
-            ).encode("utf-8-sig")
-
-            st.download_button(
-                "Download Unique Children - Latest Record CSV",
-                data=csv_bytes,
-                file_name=f"{base_name}_Unique_Children_Latest.csv",
-                mime="text/csv",
-                on_click="ignore",
-                key="download_unique_children_csv",
+            render_data_exports(
+                filtered_unique,
+                f"{base_name}_Unique_Children_Latest",
+                "unique_children_latest_dataset",
+                sheet_name="Unique Children",
+                label="Export the complete filtered latest-record dataset.",
             )
 
     with tab4:
