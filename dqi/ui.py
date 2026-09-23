@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-1.0.0
+2.0.0
 """
 
 import base64
@@ -72,7 +72,7 @@ def render_header():
 
     st.markdown(f'<div class="center-title">{APP_NAME}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="center-subtitle">Version {APP_VERSION} • Build {BUILD} • Owner: {OWNER}<br>Duplicate Detection • Clean Data Summary • Spatial Analysis • Remarks Intelligence • Field Data Quality</div>',
+        f'<div class="center-subtitle">Version {APP_VERSION} • Build {BUILD} • Owner: {OWNER}<br>Duplicate Detection • Clean Data Summary • Unique Children Analysis • Spatial Analysis • Remarks Intelligence • Field Data Quality</div>',
         unsafe_allow_html=True,
     )
 
@@ -104,6 +104,86 @@ def get_risk_label(rate: float) -> str:
     return "High"
 
 
+
+def build_unique_children_dataset(clean_dataset: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep exactly one row per CHILD ID using the latest HOUSE VISIT DATE.
+
+    Source:
+    -------
+    Clean Unique Dataset (after the application's existing duplicate removal).
+
+    Rule:
+    -----
+    1. Parse HOUSE VISIT DATE as datetime.
+    2. Sort each CHILD ID by HOUSE VISIT DATE from oldest to newest.
+    3. When more than one record exists on the same latest date, keep the
+       last source row among those tied records.
+    4. Return exactly one row per non-blank CHILD ID.
+    """
+    if clean_dataset is None or clean_dataset.empty:
+        return clean_dataset.copy()
+
+    required = ["CHILD ID", "HOUSE VISIT DATE"]
+    missing = [col for col in required if col not in clean_dataset.columns]
+    if missing:
+        raise ValueError(
+            "Unique Children Analysis requires column(s): "
+            + ", ".join(missing)
+        )
+
+    unique_df = clean_dataset.copy()
+
+    # Standardise CHILD ID for grouping.
+    unique_df["CHILD ID"] = (
+        unique_df["CHILD ID"]
+        .astype("string")
+        .str.strip()
+    )
+
+    # Ignore blank Child IDs because they cannot represent a unique child.
+    unique_df = unique_df[
+        unique_df["CHILD ID"].notna()
+        & unique_df["CHILD ID"].ne("")
+    ].copy()
+
+    # Preserve original clean-dataset order to resolve same-date ties.
+    unique_df["_source_order"] = range(len(unique_df))
+
+    unique_df["_house_visit_date_sort"] = pd.to_datetime(
+        unique_df["HOUSE VISIT DATE"],
+        errors="coerce",
+        dayfirst=True,
+    )
+
+    unique_df = (
+        unique_df
+        .sort_values(
+            [
+                "CHILD ID",
+                "_house_visit_date_sort",
+                "_source_order",
+            ],
+            ascending=[True, True, True],
+            na_position="first",
+            kind="mergesort",
+        )
+        .drop_duplicates(
+            subset=["CHILD ID"],
+            keep="last",
+        )
+        .drop(
+            columns=[
+                "_source_order",
+                "_house_visit_date_sort",
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    return unique_df
+
+
 def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
                      clean_summary_tables, remarks_dataset, remarks_summary, ym_summary,
                      repeated_remarks, theme_summary, output_xlsx, charts_pdf, uploaded_name: str):
@@ -112,6 +192,20 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
     clean_records = len(clean_dataset)
     duplicate_records = len(duplicate_dataset)
     duplicate_rate = pct(duplicate_records, total_records)
+
+    # Version 2: one latest record per CHILD ID.
+    unique_children_dataset = build_unique_children_dataset(clean_dataset)
+    unique_children_count = len(unique_children_dataset)
+    child_ids_with_hv = (
+        clean_dataset["CHILD ID"]
+        .astype("string")
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if "CHILD ID" in clean_dataset.columns
+        else 0
+    )
 
     same_remark_count = int(remarks_dataset["Same_Remark_Repeated"].sum())
     template_flag_count = int(remarks_dataset["Template_Flag"].sum())
@@ -128,9 +222,10 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
     charts_pdf_name = f"{base_name}_Clean_Data_Summary_Report.pdf"
     zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Leadership Overview",
         "Clean Data Summary",
+        "Unique Children Analysis",
         "Spatial Data Analysis",
         "Duplicate Intelligence",
         "Remarks Intelligence",
@@ -291,10 +386,273 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                 with t:
                     st.dataframe(filtered_summary_tables[key], use_container_width=True, hide_index=True)
 
+
     with tab3:
-        render_india_state_map(clean_summary_tables["State_Wise_House_Visits"])
+        st.subheader("Unique Children Analysis")
+        st.caption(
+            "One latest record is retained for each CHILD ID using HOUSE VISIT DATE. "
+            "This page uses the Clean Unique Dataset after the existing duplicate-removal process."
+        )
+
+        u1, u2, u3 = st.columns(3)
+        u1.metric(
+            "Clean House Visit Records",
+            f"{clean_records:,}",
+        )
+        u2.metric(
+            "Unique Children",
+            f"{unique_children_count:,}",
+        )
+        u3.metric(
+            "House Visit Records Removed for Latest-Child View",
+            f"{max(clean_records - unique_children_count, 0):,}",
+        )
+
+        st.info(
+            "Rule: if a CHILD ID appears multiple times, the record with the latest "
+            "HOUSE VISIT DATE is retained. If the same child has more than one record "
+            "on the same latest date, the last record in the clean source order is retained."
+        )
+
+        # --------------------------------------------------------
+        # FILTERS
+        # --------------------------------------------------------
+        st.markdown("### Filters")
+
+        filtered_unique = unique_children_dataset.copy()
+
+        def _unique_filter_options(frame: pd.DataFrame, column: str):
+            if column not in frame.columns:
+                return []
+            values = (
+                frame[column]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            return sorted(
+                [
+                    value
+                    for value in values.unique().tolist()
+                    if value
+                ]
+            )
+
+        uf1, uf2, uf3, uf4, uf5 = st.columns(5)
+
+        with uf1:
+            unique_funders = st.multiselect(
+                "Funder",
+                options=_unique_filter_options(
+                    filtered_unique,
+                    "Funder",
+                ),
+                key="unique_children_filter_funder",
+                placeholder="All Funders",
+            )
+
+        if unique_funders:
+            filtered_unique = filtered_unique[
+                filtered_unique["Funder"].isin(unique_funders)
+            ].copy()
+
+        with uf2:
+            unique_regions = st.multiselect(
+                "Region",
+                options=_unique_filter_options(
+                    filtered_unique,
+                    "REGION",
+                ),
+                key="unique_children_filter_region",
+                placeholder="All Regions",
+            )
+
+        if unique_regions:
+            filtered_unique = filtered_unique[
+                filtered_unique["REGION"].isin(unique_regions)
+            ].copy()
+
+        with uf3:
+            unique_states = st.multiselect(
+                "State",
+                options=_unique_filter_options(
+                    filtered_unique,
+                    "STATE",
+                ),
+                key="unique_children_filter_state",
+                placeholder="All States",
+            )
+
+        if unique_states:
+            filtered_unique = filtered_unique[
+                filtered_unique["STATE"].isin(unique_states)
+            ].copy()
+
+        with uf4:
+            unique_districts = st.multiselect(
+                "District",
+                options=_unique_filter_options(
+                    filtered_unique,
+                    "DISTRICT",
+                ),
+                key="unique_children_filter_district",
+                placeholder="All Districts",
+            )
+
+        if unique_districts:
+            filtered_unique = filtered_unique[
+                filtered_unique["DISTRICT"].isin(unique_districts)
+            ].copy()
+
+        with uf5:
+            unique_programs = st.multiselect(
+                "Program Launch Name",
+                options=_unique_filter_options(
+                    filtered_unique,
+                    "PROGRAM LAUNCH NAME",
+                ),
+                key="unique_children_filter_program",
+                placeholder="All Program Launches",
+            )
+
+        if unique_programs:
+            filtered_unique = filtered_unique[
+                filtered_unique["PROGRAM LAUNCH NAME"].isin(unique_programs)
+            ].copy()
+
+        filtered_unique_count = len(filtered_unique)
+        unique_share = pct(
+            filtered_unique_count,
+            unique_children_count,
+        )
+
+        um1, um2 = st.columns(2)
+        um1.metric(
+            "Filtered Unique Children",
+            f"{filtered_unique_count:,}",
+        )
+        um2.metric(
+            "Share of Unique Children",
+            f"{unique_share:.1f}%",
+        )
+
+        if filtered_unique.empty:
+            st.warning(
+                "No unique-child records match the selected filters."
+            )
+        else:
+            # ----------------------------------------------------
+            # SUMMARY CHARTS
+            # ----------------------------------------------------
+            unique_region_summary = make_summary_table(
+                filtered_unique,
+                "REGION",
+                top_n=50,
+            )
+            unique_state_summary = make_summary_table(
+                filtered_unique,
+                "STATE",
+                top_n=50,
+            )
+            unique_funder_summary = make_summary_table(
+                filtered_unique,
+                "Funder",
+                top_n=50,
+            )
+            unique_program_summary = make_summary_table(
+                filtered_unique,
+                "PROGRAM LAUNCH NAME",
+                top_n=30,
+            )
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+                render_chart_box(
+                    "1. Region-wise unique children",
+                    "Latest retained record per CHILD ID for the selected filters.",
+                    "bar",
+                    unique_region_summary,
+                    "REGION",
+                    "House Visits",
+                    orientation="v",
+                )
+
+            with c2:
+                render_chart_box(
+                    "2. State-wise unique children",
+                    "Latest retained record per CHILD ID for the selected filters.",
+                    "bar",
+                    unique_state_summary,
+                    "STATE",
+                    "House Visits",
+                    orientation="h",
+                )
+
+            c3, c4 = st.columns(2)
+
+            with c3:
+                render_chart_box(
+                    "3. Funder-wise unique children",
+                    "Latest retained record per CHILD ID for the selected filters.",
+                    "bar",
+                    unique_funder_summary,
+                    "Funder",
+                    "House Visits",
+                    orientation="h",
+                )
+
+            with c4:
+                render_chart_box(
+                    "4. Program Launch-wise unique children",
+                    "Latest retained record per CHILD ID for the selected filters.",
+                    "bar",
+                    unique_program_summary,
+                    "PROGRAM LAUNCH NAME",
+                    "House Visits",
+                    orientation="h",
+                )
+
+            # Rename metric column for this page so users do not
+            # interpret the chart/table values as house-visit counts.
+            for summary_df in [
+                unique_region_summary,
+                unique_state_summary,
+                unique_funder_summary,
+                unique_program_summary,
+            ]:
+                if "House Visits" in summary_df.columns:
+                    summary_df.rename(
+                        columns={
+                            "House Visits": "Unique Children"
+                        },
+                        inplace=True,
+                    )
+
+            st.markdown("### Latest Record for Each Child")
+            st.dataframe(
+                filtered_unique,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            csv_bytes = filtered_unique.to_csv(
+                index=False
+            ).encode("utf-8-sig")
+
+            st.download_button(
+                "Download Unique Children - Latest Record CSV",
+                data=csv_bytes,
+                file_name=f"{base_name}_Unique_Children_Latest.csv",
+                mime="text/csv",
+                on_click="ignore",
+                key="download_unique_children_csv",
+            )
 
     with tab4:
+        render_india_state_map(clean_summary_tables["State_Wise_House_Visits"])
+
+    with tab5:
         st.subheader("Duplicate Intelligence")
         st.caption("Duplicate logic: PROGRAM LAUNCH NAME + ProjectType + CHILD ID + TMO Name + YM Name + HOUSE VISIT DATE")
         d1, d2, d3 = st.columns(3)
@@ -306,7 +664,7 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
         st.markdown("### Full Dataset with Duplicate Flag")
         st.dataframe(full_dataset.head(200), use_container_width=True, hide_index=True)
 
-    with tab5:
+    with tab6:
         st.subheader("Remarks Intelligence")
         st.caption("Remarks intelligence is calculated on clean unique data only to avoid duplicate inflation.")
         q1, q2, q3, q4 = st.columns(4)
@@ -324,10 +682,10 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
         row_cols = ["REGION", "STATE", "DISTRICT", "PROGRAM LAUNCH NAME", "Sub Type", "TMO Name", "YM Name", "CHILD ID", "HOUSE VISIT DATE", "REMARKS", "Same_Remark_Repeated", "Template_Flag", "Template_Score", "Template_Reason", "Possible_AI_Prompt_Copy", "Remarks_Themes", "Remarks_Word_Count", "Remarks_Quality_Band"]
         st.dataframe(remarks_dataset[row_cols].head(300), use_container_width=True, hide_index=True)
 
-    with tab6:
+    with tab7:
         render_faq()
 
-    with tab7:
+    with tab8:
         st.subheader("Download Reports")
         st.download_button("Download Complete DQI Intelligence Excel", data=output_xlsx.getvalue(), file_name=output_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click="ignore", key="download_excel")
         st.download_button("Download Clean Data Summary Report PDF", data=charts_pdf.getvalue(), file_name=charts_pdf_name, mime="application/pdf", on_click="ignore", key="download_pdf")
