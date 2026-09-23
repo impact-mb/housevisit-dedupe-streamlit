@@ -22,7 +22,7 @@ import streamlit as st
 from .charts import render_chart_box, render_labeled_bar_chart
 from .config import APP_NAME, APP_VERSION, BUILD, OWNER, SPORTS_QUOTES
 from .faq import render_faq
-from .processor import pct
+from .processor import pct, make_summary_table
 from .spatial import render_india_state_map
 from .exporter import create_zip_bundle, excel_sheet_explanation_df
 
@@ -176,26 +176,120 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
 
     with tab2:
         st.subheader("Clean Data Summary After Deduplication")
-        st.caption("All charts below use Clean Unique House Visits only. Labels are outside the graph marks for cleaner readability.")
-        render_chart_box("1. House Visit Type-wise visits", "Distribution by HOUSE VISIT TYPE.", "pie", clean_summary_tables["House_Visit_Type_Wise"], "HOUSE VISIT TYPE", "House Visits")
-        c1, c2 = st.columns(2)
-        with c1:
-            render_chart_box("2. Region-wise house visits", "Clean unique house visits by region.", "bar", clean_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", orientation="v")
-        with c2:
-            render_chart_box("3. State-wise house visits", "Clean unique house visits by state.", "bar", clean_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", orientation="h")
-        c3, c4 = st.columns(2)
-        with c3:
-            render_chart_box("4. Funder-wise house visits", "Clean unique house visits by funder.", "bar", clean_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", orientation="h")
-        with c4:
-            render_chart_box("5. TMO-wise house visits", "Top TMO-wise house visit volume.", "bar", clean_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", orientation="h")
-        render_chart_box("6. YM-wise house visits", "Top YM-wise house visit volume.", "bar", clean_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", orientation="h")
+        st.caption("All charts and summary tables below use the Clean Unique Dataset and respond dynamically to the filters.")
 
-        st.markdown("### Summary Tables")
-        labels = [("House Visit Type", "House_Visit_Type_Wise"), ("Region", "Region_Wise_House_Visits"), ("State", "State_Wise_House_Visits"), ("Funder", "Funder_Wise_House_Visits"), ("TMO", "TMO_Wise_House_Visits"), ("YM", "YM_Wise_House_Visits")]
-        table_tabs = st.tabs([x[0] for x in labels])
-        for t, (_, key) in zip(table_tabs, labels):
-            with t:
-                st.dataframe(clean_summary_tables[key], use_container_width=True, hide_index=True)
+        # ------------------------------------------------------------
+        # DYNAMIC FILTER ROW
+        # ------------------------------------------------------------
+        st.markdown("### Filters")
+
+        # Keep one working dataframe and apply filters from left to right.
+        # An empty selection means All.
+        filtered_clean = clean_dataset.copy()
+
+        def _filter_options(frame: pd.DataFrame, column: str):
+            if column not in frame.columns:
+                return []
+            values = (
+                frame[column]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            return sorted([v for v in values.unique().tolist() if v])
+
+        f1, f2, f3, f4, f5 = st.columns(5)
+
+        with f1:
+            funder_values = st.multiselect(
+                "Funder",
+                options=_filter_options(filtered_clean, "Funder"),
+                key="clean_summary_filter_funder",
+                placeholder="All Funders",
+            )
+        if funder_values:
+            filtered_clean = filtered_clean[filtered_clean["Funder"].isin(funder_values)].copy()
+
+        with f2:
+            region_values = st.multiselect(
+                "Region",
+                options=_filter_options(filtered_clean, "REGION"),
+                key="clean_summary_filter_region",
+                placeholder="All Regions",
+            )
+        if region_values:
+            filtered_clean = filtered_clean[filtered_clean["REGION"].isin(region_values)].copy()
+
+        with f3:
+            state_values = st.multiselect(
+                "State",
+                options=_filter_options(filtered_clean, "STATE"),
+                key="clean_summary_filter_state",
+                placeholder="All States",
+            )
+        if state_values:
+            filtered_clean = filtered_clean[filtered_clean["STATE"].isin(state_values)].copy()
+
+        with f4:
+            district_values = st.multiselect(
+                "District",
+                options=_filter_options(filtered_clean, "DISTRICT"),
+                key="clean_summary_filter_district",
+                placeholder="All Districts",
+            )
+        if district_values:
+            filtered_clean = filtered_clean[filtered_clean["DISTRICT"].isin(district_values)].copy()
+
+        with f5:
+            program_values = st.multiselect(
+                "Program Launch Name",
+                options=_filter_options(filtered_clean, "PROGRAM LAUNCH NAME"),
+                key="clean_summary_filter_program",
+                placeholder="All Program Launches",
+            )
+        if program_values:
+            filtered_clean = filtered_clean[filtered_clean["PROGRAM LAUNCH NAME"].isin(program_values)].copy()
+
+        # Rebuild summary tables from the filtered clean data.
+        filtered_summary_tables = {
+            "House_Visit_Type_Wise": make_summary_table(filtered_clean, "HOUSE VISIT TYPE", top_n=20),
+            "Region_Wise_House_Visits": make_summary_table(filtered_clean, "REGION", top_n=50),
+            "State_Wise_House_Visits": make_summary_table(filtered_clean, "STATE", top_n=50),
+            "Funder_Wise_House_Visits": make_summary_table(filtered_clean, "Funder", top_n=50),
+            "TMO_Wise_House_Visits": make_summary_table(filtered_clean, "TMO Name", top_n=30),
+            "YM_Wise_House_Visits": make_summary_table(filtered_clean, "YM Name", top_n=30),
+        }
+
+        selected_records = len(filtered_clean)
+        total_clean_records = len(clean_dataset)
+        selected_share = pct(selected_records, total_clean_records)
+
+        m1, m2 = st.columns(2)
+        m1.metric("Filtered Clean House Visits", f"{selected_records:,}")
+        m2.metric("Share of Clean Dataset", f"{selected_share:.1f}%")
+
+        if filtered_clean.empty:
+            st.warning("No records match the selected filters. Please change or clear one or more filters.")
+        else:
+            render_chart_box("1. House Visit Type-wise visits", "Distribution by HOUSE VISIT TYPE for the selected filters.", "pie", filtered_summary_tables["House_Visit_Type_Wise"], "HOUSE VISIT TYPE", "House Visits")
+            c1, c2 = st.columns(2)
+            with c1:
+                render_chart_box("2. Region-wise house visits", "Clean unique house visits by region for the selected filters.", "bar", filtered_summary_tables["Region_Wise_House_Visits"], "REGION", "House Visits", orientation="v")
+            with c2:
+                render_chart_box("3. State-wise house visits", "Clean unique house visits by state for the selected filters.", "bar", filtered_summary_tables["State_Wise_House_Visits"], "STATE", "House Visits", orientation="h")
+            c3, c4 = st.columns(2)
+            with c3:
+                render_chart_box("4. Funder-wise house visits", "Clean unique house visits by funder for the selected filters.", "bar", filtered_summary_tables["Funder_Wise_House_Visits"], "Funder", "House Visits", orientation="h")
+            with c4:
+                render_chart_box("5. TMO-wise house visits", "Top TMO-wise house visit volume for the selected filters.", "bar", filtered_summary_tables["TMO_Wise_House_Visits"], "TMO Name", "House Visits", orientation="h")
+            render_chart_box("6. YM-wise house visits", "Top YM-wise house visit volume for the selected filters.", "bar", filtered_summary_tables["YM_Wise_House_Visits"], "YM Name", "House Visits", orientation="h")
+
+            st.markdown("### Summary Tables")
+            labels = [("House Visit Type", "House_Visit_Type_Wise"), ("Region", "Region_Wise_House_Visits"), ("State", "State_Wise_House_Visits"), ("Funder", "Funder_Wise_House_Visits"), ("TMO", "TMO_Wise_House_Visits"), ("YM", "YM_Wise_House_Visits")]
+            table_tabs = st.tabs([x[0] for x in labels])
+            for t, (_, key) in zip(table_tabs, labels):
+                with t:
+                    st.dataframe(filtered_summary_tables[key], use_container_width=True, hide_index=True)
 
     with tab3:
         render_india_state_map(clean_summary_tables["State_Wise_House_Visits"])

@@ -16,8 +16,8 @@ Version:
 """
 
 APP_NAME = "House Visit Data Quality Intelligence Platform (DQI)"
-APP_VERSION = "1.0.0"
-BUILD = "2026.06"
+APP_VERSION = "1.1.0"
+BUILD = "2026.09"
 OWNER = "Magic Bus Data Team"
 
 SCHEMA = {
