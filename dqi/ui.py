@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-2.1.0
+2.2.0
 """
 
 import base64
@@ -144,7 +144,7 @@ def render_data_exports(
     file_stub: str,
     key_prefix: str,
     sheet_name: str = "Data",
-    label: str = "Export chart data",
+    label: str = "Download data used in this chart",
 ):
     """Render CSV and Excel download buttons for the supplied DataFrame."""
     if dataframe is None or dataframe.empty:
@@ -544,15 +544,6 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                 sheet_name="YM",
             )
 
-            st.markdown("### Filtered Clean Dataset")
-            render_data_exports(
-                filtered_clean,
-                f"{base_name}_Filtered_Clean_Data",
-                "clean_summary_filtered_dataset",
-                sheet_name="Filtered Clean Data",
-                label="Export the complete clean dataset for the currently selected filters.",
-            )
-
             st.markdown("### Summary Tables")
             labels = [("House Visit Type", "House_Visit_Type_Wise"), ("Region", "Region_Wise_House_Visits"), ("State", "State_Wise_House_Visits"), ("Funder", "Funder_Wise_House_Visits"), ("TMO", "TMO_Wise_House_Visits"), ("YM", "YM_Wise_House_Visits")]
             table_tabs = st.tabs([x[0] for x in labels])
@@ -562,13 +553,6 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                         filtered_summary_tables[key],
                         use_container_width=True,
                         hide_index=True,
-                    )
-                    render_data_exports(
-                        filtered_summary_tables[key],
-                        f"{base_name}_CleanSummary_{key}",
-                        f"clean_summary_table_{key}",
-                        sheet_name=key[:31],
-                        label="Export this summary table.",
                     )
 
 
@@ -857,13 +841,6 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
                 hide_index=True,
             )
 
-            render_data_exports(
-                filtered_unique,
-                f"{base_name}_Unique_Children_Latest",
-                "unique_children_latest_dataset",
-                sheet_name="Unique Children",
-                label="Export the complete filtered latest-record dataset.",
-            )
 
     with tab4:
         render_india_state_map(clean_summary_tables["State_Wise_House_Visits"])
