@@ -117,3 +117,8 @@ The first analysis still needs to read and analyse the uploaded file, but the da
 Changing filters or interacting with the dashboard should also avoid repeating the full upload/analysis pipeline.
 
 The first time a user clicks **Prepare Download Files**, there may still be a short wait while the Excel, PDF and ZIP files are created. This work is intentionally deferred until it is actually needed.
+
+
+### Version 3.1.1 compatibility fix
+
+Version 3.1.1 includes the matching `dqi/charts.py` required by the Executive Insights and chart-level CSV/Excel download features. This prevents deployment errors caused by an older chart helper that does not accept the new export arguments.

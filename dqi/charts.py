@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-2.3.0
+3.1.1
 """
 
 from io import BytesIO

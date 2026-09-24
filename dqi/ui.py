@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-3.1.0
+3.1.1
 """
 
 import base64
