@@ -2,7 +2,7 @@
 House Visit Data Quality Intelligence Platform (DQI)
 ===================================================
 
-Version 3.1.0
+Version 3.1.2
 -------------
 Performance-optimized Streamlit orchestrator.
 
@@ -29,6 +29,17 @@ from dqi.ui import (
     render_dashboard,
     render_header,
     render_upload_prompt,
+)
+
+
+MAX_UPLOAD_MB = 10
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+ALLOWED_EXTENSIONS = (
+    ".xlsx",
+    ".xls",
+    ".xlsm",
+    ".csv",
 )
 
 
@@ -119,14 +130,23 @@ inject_css()
 render_logout_button()
 render_header()
 
+st.info(
+    "Upload rule: only Excel or CSV files are allowed, "
+    f"and the file size must be less than {MAX_UPLOAD_MB} MB."
+)
+
 uploaded = st.file_uploader(
-    "Upload House Visit Data File (.xlsx, .xls, .xlsm, .csv)",
+    "Upload House Visit Data File",
     type=[
         "xlsx",
         "xls",
         "xlsm",
         "csv",
     ],
+    help=(
+        "Allowed formats: .xlsx, .xls, .xlsm, .csv. "
+        f"Maximum accepted size: less than {MAX_UPLOAD_MB} MB."
+    ),
 )
 
 # Session state keeps analysed data available across widget reruns.
@@ -141,8 +161,62 @@ if "dqi_download_package" not in st.session_state:
     st.session_state["dqi_download_package"] = None
 
 if uploaded:
+    uploaded_name_lower = uploaded.name.lower()
+
+    valid_extension = (
+        uploaded_name_lower.endswith(
+            ALLOWED_EXTENSIONS
+        )
+    )
+
+    uploaded_size = getattr(
+        uploaded,
+        "size",
+        None,
+    )
+
+    if uploaded_size is None:
+        uploaded_size = len(
+            uploaded.getvalue()
+        )
+
+    file_size_mb = (
+        uploaded_size
+        / (1024 * 1024)
+    )
+
+    if not valid_extension:
+        st.error(
+            "Invalid file type. Please upload only an Excel "
+            "(.xlsx, .xls, .xlsm) or CSV (.csv) file."
+        )
+
+        st.session_state["dqi_result"] = None
+        st.session_state["dqi_file_key"] = None
+        st.session_state["dqi_download_package"] = None
+
+        st.stop()
+
+    if uploaded_size >= MAX_UPLOAD_BYTES:
+        st.error(
+            f"File is too large: {file_size_mb:.2f} MB. "
+            f"Please upload a file smaller than {MAX_UPLOAD_MB} MB."
+        )
+
+        st.caption(
+            "Tip: save the data as CSV, remove unnecessary columns/rows, "
+            "or split the file into smaller reporting-period files."
+        )
+
+        st.session_state["dqi_result"] = None
+        st.session_state["dqi_file_key"] = None
+        st.session_state["dqi_download_package"] = None
+
+        st.stop()
+
     st.success(
-        f"File uploaded: **{uploaded.name}**"
+        f"File uploaded: **{uploaded.name}** "
+        f"({file_size_mb:.2f} MB)"
     )
 
     # Read bytes once. A content hash is safer than filename + size because

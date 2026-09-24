@@ -12,11 +12,11 @@ Magic Bus Data Team
 
 Version:
 --------
-3.1.1
+3.1.2
 """
 
 APP_NAME = "House Visit Data Quality Intelligence Platform (DQI)"
-APP_VERSION = "3.1.1"
+APP_VERSION = "3.1.2"
 BUILD = "2026.09"
 OWNER = "Magic Bus Data Team"
 

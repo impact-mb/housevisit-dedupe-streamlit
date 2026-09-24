@@ -122,3 +122,15 @@ The first time a user clicks **Prepare Download Files**, there may still be a sh
 ### Version 3.1.1 compatibility fix
 
 Version 3.1.1 includes the matching `dqi/charts.py` required by the Executive Insights and chart-level CSV/Excel download features. This prevents deployment errors caused by an older chart helper that does not accept the new export arguments.
+
+
+### Version 3.1.2 - Upload Validation
+
+To improve stability on Streamlit Cloud, the application now applies a strict upload rule:
+
+- Allowed file formats: **Excel** (`.xlsx`, `.xls`, `.xlsm`) and **CSV** (`.csv`) only.
+- File size must be **less than 10 MB**.
+- Files that are 10 MB or larger are rejected before DQI processing starts.
+- `.streamlit/config.toml` also sets the Streamlit server upload limit to 10 MB.
+
+For larger datasets, reduce the file size before upload by removing unnecessary columns/rows, saving as CSV where appropriate, or splitting the dataset by reporting period.
