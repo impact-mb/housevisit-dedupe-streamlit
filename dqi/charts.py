@@ -11,8 +11,10 @@ Magic Bus Data Team
 
 Version:
 --------
-1.0.0
+2.3.0
 """
+
+from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
@@ -73,13 +75,128 @@ def render_labeled_pie_chart(data: pd.DataFrame, name_col: str, value_col: str, 
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_chart_box(title: str, description: str, chart_type: str, data: pd.DataFrame, x_col: str, y_col: str, orientation: str = "h"):
-    """Render one chart inside a bordered visual card."""
+def _excel_bytes(
+    data: pd.DataFrame,
+    sheet_name: str = "Data",
+) -> bytes:
+    """Create an Excel workbook in memory for chart-data download."""
+    output = BytesIO()
+
+    safe_sheet_name = (
+        str(sheet_name)
+        .replace("/", "-")
+        .replace("\\", "-")
+        .replace("*", "-")
+        .replace("?", "-")
+        .replace(":", "-")
+        .replace("[", "(")
+        .replace("]", ")")
+    )[:31] or "Data"
+
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl",
+    ) as writer:
+        data.to_excel(
+            writer,
+            sheet_name=safe_sheet_name,
+            index=False,
+        )
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def render_chart_box(
+    title: str,
+    description: str,
+    chart_type: str,
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    orientation: str = "h",
+    export_data: pd.DataFrame | None = None,
+    export_file_stub: str | None = None,
+    export_key: str | None = None,
+    export_sheet_name: str = "Data",
+):
+    """
+    Render one chart inside a bordered visual card.
+
+    CSV and Excel buttons are placed inside this same chart card
+    when export_data is provided.
+    """
     with st.container(border=True):
         st.markdown(f"#### {title}")
+
         if description:
             st.caption(description)
+
         if chart_type == "pie":
-            render_labeled_pie_chart(data, x_col, y_col, title)
+            render_labeled_pie_chart(
+                data,
+                x_col,
+                y_col,
+                title,
+            )
         else:
-            render_labeled_bar_chart(data, x_col, y_col, title, orientation=orientation)
+            render_labeled_bar_chart(
+                data,
+                x_col,
+                y_col,
+                title,
+                orientation=orientation,
+            )
+
+        # --------------------------------------------------------
+        # DOWNLOADS ARE PART OF THE CHART CARD
+        # --------------------------------------------------------
+        if (
+            export_data is not None
+            and not export_data.empty
+            and export_file_stub
+            and export_key
+        ):
+            st.markdown(
+                "<div style='font-size:13px; font-weight:600; "
+                "margin-top:-8px; margin-bottom:4px;'>"
+                "Download chart data"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            csv_bytes = export_data.to_csv(
+                index=False
+            ).encode("utf-8-sig")
+
+            excel_bytes = _excel_bytes(
+                export_data,
+                sheet_name=export_sheet_name,
+            )
+
+            download_csv, download_excel = st.columns(2)
+
+            with download_csv:
+                st.download_button(
+                    "CSV",
+                    data=csv_bytes,
+                    file_name=f"{export_file_stub}.csv",
+                    mime="text/csv",
+                    key=f"{export_key}_csv",
+                    on_click="ignore",
+                    use_container_width=True,
+                )
+
+            with download_excel:
+                st.download_button(
+                    "Excel",
+                    data=excel_bytes,
+                    file_name=f"{export_file_stub}.xlsx",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
+                    key=f"{export_key}_xlsx",
+                    on_click="ignore",
+                    use_container_width=True,
+                )
