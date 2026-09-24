@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-2.3.0
+3.0.0
 """
 
 import base64
@@ -208,6 +208,296 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
         else 0
     )
 
+
+    # ============================================================
+    # VERSION 3: CXO / EXECUTIVE INSIGHTS
+    # ============================================================
+
+    avg_visits_per_child = (
+        clean_records / unique_children_count
+        if unique_children_count
+        else 0
+    )
+
+    coverage_region_count = (
+        clean_dataset["REGION"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if "REGION" in clean_dataset.columns
+        else 0
+    )
+
+    coverage_state_count = (
+        clean_dataset["STATE"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if "STATE" in clean_dataset.columns
+        else 0
+    )
+
+    coverage_district_count = (
+        clean_dataset["DISTRICT"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if "DISTRICT" in clean_dataset.columns
+        else 0
+    )
+
+    coverage_program_count = (
+        clean_dataset["PROGRAM LAUNCH NAME"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+        if "PROGRAM LAUNCH NAME" in clean_dataset.columns
+        else 0
+    )
+
+    # House visit count per unique child
+    if "CHILD ID" in clean_dataset.columns:
+        child_visit_frequency = (
+            clean_dataset.assign(
+                _child_id=(
+                    clean_dataset["CHILD ID"]
+                    .astype("string")
+                    .str.strip()
+                )
+            )
+            .query("_child_id.notna() and _child_id != ''")
+            .groupby("_child_id", as_index=False)
+            .size()
+            .rename(
+                columns={
+                    "_child_id": "CHILD ID",
+                    "size": "House Visits",
+                }
+            )
+            .sort_values(
+                "House Visits",
+                ascending=False,
+            )
+            .reset_index(drop=True)
+        )
+    else:
+        child_visit_frequency = pd.DataFrame(
+            columns=[
+                "CHILD ID",
+                "House Visits",
+            ]
+        )
+
+    high_frequency_threshold = 5
+
+    high_frequency_cases = (
+        child_visit_frequency[
+            child_visit_frequency["House Visits"]
+            >= high_frequency_threshold
+        ]
+        .copy()
+    )
+
+    high_frequency_children = len(
+        high_frequency_cases
+    )
+
+    # ------------------------------------------------------------
+    # RECENCY OF LATEST HOUSE VISIT
+    # Relative to latest valid HOUSE VISIT DATE in uploaded data.
+    # ------------------------------------------------------------
+
+    recency_df = unique_children_dataset.copy()
+
+    if (
+        not recency_df.empty
+        and "HOUSE VISIT DATE" in recency_df.columns
+    ):
+        recency_df["_Latest_HV_Date"] = pd.to_datetime(
+            recency_df["HOUSE VISIT DATE"],
+            errors="coerce",
+            dayfirst=True,
+        )
+
+        reference_date = (
+            recency_df["_Latest_HV_Date"].max()
+        )
+
+        if pd.notna(reference_date):
+            recency_df["Days_Since_Latest_Visit"] = (
+                reference_date
+                - recency_df["_Latest_HV_Date"]
+            ).dt.days
+
+            def _recency_bucket(days):
+                if pd.isna(days):
+                    return "Invalid / Missing Date"
+                if days <= 30:
+                    return "0-30 days"
+                if days <= 60:
+                    return "31-60 days"
+                if days <= 90:
+                    return "61-90 days"
+                return "90+ days"
+
+            recency_df["Visit Recency"] = (
+                recency_df["Days_Since_Latest_Visit"]
+                .apply(_recency_bucket)
+            )
+        else:
+            reference_date = pd.NaT
+            recency_df["Days_Since_Latest_Visit"] = pd.NA
+            recency_df["Visit Recency"] = (
+                "Invalid / Missing Date"
+            )
+    else:
+        reference_date = pd.NaT
+        recency_df["Days_Since_Latest_Visit"] = pd.NA
+        recency_df["Visit Recency"] = (
+            "Invalid / Missing Date"
+        )
+
+    recency_order = [
+        "0-30 days",
+        "31-60 days",
+        "61-90 days",
+        "90+ days",
+        "Invalid / Missing Date",
+    ]
+
+    recency_summary = (
+        recency_df["Visit Recency"]
+        .value_counts()
+        .reindex(
+            recency_order,
+            fill_value=0,
+        )
+        .rename_axis("Visit Recency")
+        .reset_index(name="Unique Children")
+    )
+
+    children_90_plus = int(
+        recency_summary.loc[
+            recency_summary["Visit Recency"]
+            == "90+ days",
+            "Unique Children",
+        ].sum()
+    )
+
+    # ------------------------------------------------------------
+    # TOP FUNDER / DISTRICT
+    # ------------------------------------------------------------
+
+    top_funders_cxo = (
+        make_summary_table(
+            clean_dataset,
+            "Funder",
+            top_n=5,
+        )
+        if "Funder" in clean_dataset.columns
+        else pd.DataFrame()
+    )
+
+    top_districts_cxo = (
+        make_summary_table(
+            clean_dataset,
+            "DISTRICT",
+            top_n=5,
+        )
+        if "DISTRICT" in clean_dataset.columns
+        else pd.DataFrame()
+    )
+
+    # ------------------------------------------------------------
+    # CRITICAL DATA-QUALITY EXCEPTIONS
+    # ------------------------------------------------------------
+
+    critical_fields = [
+        "CHILD ID",
+        "HOUSE VISIT DATE",
+        "REGION",
+        "STATE",
+        "DISTRICT",
+        "PROGRAM LAUNCH NAME",
+    ]
+
+    dq_exception_rows = pd.Series(
+        False,
+        index=clean_dataset.index,
+    )
+
+    dq_exception_breakdown = []
+
+    for col in critical_fields:
+        if col in clean_dataset.columns:
+            col_values = (
+                clean_dataset[col]
+                .astype("string")
+                .str.strip()
+            )
+
+            missing_mask = (
+                col_values.isna()
+                | col_values.eq("")
+            )
+
+            dq_exception_rows = (
+                dq_exception_rows
+                | missing_mask
+            )
+
+            dq_exception_breakdown.append({
+                "Field": col,
+                "Missing Records": int(
+                    missing_mask.sum()
+                ),
+            })
+
+    if "HOUSE VISIT DATE" in clean_dataset.columns:
+        parsed_hv_date = pd.to_datetime(
+            clean_dataset["HOUSE VISIT DATE"],
+            errors="coerce",
+            dayfirst=True,
+        )
+
+        invalid_date_mask = (
+            parsed_hv_date.isna()
+            & clean_dataset["HOUSE VISIT DATE"]
+            .notna()
+        )
+
+        dq_exception_rows = (
+            dq_exception_rows
+            | invalid_date_mask
+        )
+
+        dq_exception_breakdown.append({
+            "Field": "Invalid HOUSE VISIT DATE",
+            "Missing Records": int(
+                invalid_date_mask.sum()
+            ),
+        })
+
+    dq_exception_count = int(
+        dq_exception_rows.sum()
+    )
+
+    dq_exception_breakdown = pd.DataFrame(
+        dq_exception_breakdown
+    )
+
     same_remark_count = int(remarks_dataset["Same_Remark_Repeated"].sum())
     template_flag_count = int(remarks_dataset["Template_Flag"].sum())
     blank_remarks_count = int(remarks_dataset["Blank_Remark"].sum())
@@ -224,7 +514,7 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
     zip_name = f"{base_name}_DQI_Intelligence_Bundle.zip"
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "Leadership Overview",
+        "Executive Insights",
         "Clean Data Summary",
         "Unique Children Analysis",
         "Spatial Data Analysis",
@@ -235,40 +525,276 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
     ])
 
     with tab1:
-        st.subheader("Leadership Data Quality Overview")
+        st.subheader("Executive Insights")
+        st.caption(
+            "CXO-level view of delivery intensity, reach, coverage, "
+            "recency and data-quality signals."
+        )
+
+        # --------------------------------------------------------
+        # CXO KPI ROW 1
+        # --------------------------------------------------------
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Total Records Uploaded", f"{total_records:,}")
-        k2.metric("Clean Unique House Visits", f"{clean_records:,}")
-        k3.metric("Duplicate Records Removed", f"{duplicate_records:,}")
-        k4.metric("Remarks Quality Base", f"{clean_records:,}")
 
-        k5, k6, k7, k8 = st.columns(4)
-        k5.metric("Same Remark Repeated", f"{same_remark_count:,}")
-        k6.metric("Template-like Remarks", f"{template_flag_count:,}")
-        k7.metric("Possible AI / Prompt Copy", f"{ai_prompt_count:,}")
-        k8.metric("Blank Remarks", f"{blank_remarks_count:,}")
+        k1.metric(
+            "Total Clean House Visits",
+            f"{clean_records:,}",
+        )
 
-        st.info("Percent labels are intentionally not shown on KPI cards. Detailed rates are available in the tables below.")
+        k2.metric(
+            "Unique Children Reached",
+            f"{unique_children_count:,}",
+        )
 
-        r1, r2 = st.columns([1, 1])
-        with r1:
-            risk_df = pd.DataFrame({
-                "Indicator": ["Duplicate Rate", "Same Remark Repeated Rate", "Template-like Remark Rate", "Possible AI/Prompt Copy Rate", "Blank Remark Rate"],
-                "Rate %": [duplicate_rate, same_remark_rate, template_rate, ai_rate, blank_rate],
-                "Risk": [get_risk_label(duplicate_rate), get_risk_label(same_remark_rate), get_risk_label(template_rate), get_risk_label(ai_rate), get_risk_label(blank_rate)],
-            })
-            st.markdown("### Quality Risk Snapshot")
-            st.dataframe(risk_df, use_container_width=True, hide_index=True)
-        with r2:
-            st.markdown("### Top Themes")
-            if not theme_summary.empty:
-                theme_chart = theme_summary.groupby("Theme", as_index=False)["Records"].sum().sort_values("Records", ascending=False).head(10)
-                render_labeled_bar_chart(theme_chart, "Theme", "Records", "Top 10 themes from clean remarks", orientation="h")
+        k3.metric(
+            "Average Visits per Child",
+            f"{avg_visits_per_child:.2f}",
+        )
+
+        k4.metric(
+            "Duplicate Rate",
+            f"{duplicate_rate:.1f}%",
+        )
+
+        # --------------------------------------------------------
+        # CXO KPI ROW 2
+        # --------------------------------------------------------
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric(
+            "Regions Covered",
+            f"{coverage_region_count:,}",
+        )
+
+        c2.metric(
+            "States Covered",
+            f"{coverage_state_count:,}",
+        )
+
+        c3.metric(
+            "Districts Covered",
+            f"{coverage_district_count:,}",
+        )
+
+        c4.metric(
+            "Program Launches",
+            f"{coverage_program_count:,}",
+        )
+
+        # --------------------------------------------------------
+        # ATTENTION KPIs
+        # --------------------------------------------------------
+        a1, a2, a3 = st.columns(3)
+
+        a1.metric(
+            "Children with 90+ Days Since Latest Visit",
+            f"{children_90_plus:,}",
+        )
+
+        a2.metric(
+            f"Children with {high_frequency_threshold}+ House Visits",
+            f"{high_frequency_children:,}",
+        )
+
+        a3.metric(
+            "Critical Data Quality Exception Rows",
+            f"{dq_exception_count:,}",
+        )
+
+        if pd.notna(reference_date):
+            st.caption(
+                "Visit recency is calculated relative to the latest "
+                f"valid HOUSE VISIT DATE in the uploaded data: "
+                f"{reference_date.strftime('%d %b %Y')}."
+            )
+
+        # --------------------------------------------------------
+        # COVERAGE + CONCENTRATION CHARTS
+        # --------------------------------------------------------
+        x1, x2 = st.columns(2)
+
+        with x1:
+            if not top_funders_cxo.empty:
+                render_chart_box(
+                    "Top 5 Funders by House Visits",
+                    "Shows where clean house-visit volume is concentrated.",
+                    "bar",
+                    top_funders_cxo,
+                    "Funder",
+                    "House Visits",
+                    orientation="h",
+                    export_data=top_funders_cxo,
+                    export_file_stub=f"{base_name}_Executive_Top_Funders",
+                    export_key="executive_top_funders",
+                    export_sheet_name="Top Funders",
+                )
             else:
-                st.write("No theme data available.")
+                st.info(
+                    "Funder information is not available in the uploaded file."
+                )
 
-        st.markdown("### Top YM / TMO Quality Review")
-        st.dataframe(ym_summary.head(20), use_container_width=True, hide_index=True)
+        with x2:
+            if not top_districts_cxo.empty:
+                render_chart_box(
+                    "Top 5 Districts by House Visits",
+                    "Shows where clean house-visit volume is concentrated.",
+                    "bar",
+                    top_districts_cxo,
+                    "DISTRICT",
+                    "House Visits",
+                    orientation="h",
+                    export_data=top_districts_cxo,
+                    export_file_stub=f"{base_name}_Executive_Top_Districts",
+                    export_key="executive_top_districts",
+                    export_sheet_name="Top Districts",
+                )
+            else:
+                st.info(
+                    "District information is not available in the uploaded file."
+                )
+
+        # --------------------------------------------------------
+        # RECENCY + HIGH FREQUENCY
+        # --------------------------------------------------------
+        x3, x4 = st.columns(2)
+
+        with x3:
+            render_chart_box(
+                "Latest House Visit Recency",
+                "Unique children grouped by days since their latest house visit.",
+                "bar",
+                recency_summary,
+                "Visit Recency",
+                "Unique Children",
+                orientation="v",
+                export_data=recency_summary,
+                export_file_stub=f"{base_name}_Executive_Visit_Recency",
+                export_key="executive_recency",
+                export_sheet_name="Visit Recency",
+            )
+
+        with x4:
+            if not child_visit_frequency.empty:
+                visit_frequency_summary = (
+                    child_visit_frequency[
+                        "House Visits"
+                    ]
+                    .value_counts()
+                    .sort_index()
+                    .rename_axis("House Visits per Child")
+                    .reset_index(
+                        name="Unique Children"
+                    )
+                )
+
+                render_chart_box(
+                    "House Visit Frequency per Child",
+                    "Distribution of clean house visits received by each unique child.",
+                    "bar",
+                    visit_frequency_summary,
+                    "House Visits per Child",
+                    "Unique Children",
+                    orientation="v",
+                    export_data=visit_frequency_summary,
+                    export_file_stub=f"{base_name}_Executive_Visit_Frequency",
+                    export_key="executive_visit_frequency",
+                    export_sheet_name="Visit Frequency",
+                )
+            else:
+                st.info(
+                    "Child-level house visit frequency could not be calculated."
+                )
+
+        # --------------------------------------------------------
+        # ACTION / ATTENTION AREA
+        # --------------------------------------------------------
+        st.markdown("### Attention Required")
+
+        action_rows = []
+
+        if children_90_plus > 0:
+            action_rows.append({
+                "Priority Area": "Follow-up Recency",
+                "Signal": (
+                    f"{children_90_plus:,} children have a latest "
+                    "house visit more than 90 days before the reference date."
+                ),
+                "Suggested Review": (
+                    "Review whether these children require follow-up "
+                    "or whether programme schedules explain the gap."
+                ),
+            })
+
+        if high_frequency_children > 0:
+            action_rows.append({
+                "Priority Area": "High Visit Frequency",
+                "Signal": (
+                    f"{high_frequency_children:,} children have "
+                    f"{high_frequency_threshold}+ clean house visits."
+                ),
+                "Suggested Review": (
+                    "Check whether high-frequency visits are expected "
+                    "for the programme or require operational review."
+                ),
+            })
+
+        if dq_exception_count > 0:
+            action_rows.append({
+                "Priority Area": "Data Quality",
+                "Signal": (
+                    f"{dq_exception_count:,} clean rows have at least "
+                    "one critical missing/invalid field."
+                ),
+                "Suggested Review": (
+                    "Prioritise correction of Child ID, date, geography "
+                    "and Program Launch information."
+                ),
+            })
+
+        if duplicate_rate > 0:
+            action_rows.append({
+                "Priority Area": "Duplicate Data",
+                "Signal": (
+                    f"{duplicate_rate:.1f}% of uploaded records were "
+                    "identified as duplicates under the configured logic."
+                ),
+                "Suggested Review": (
+                    "Monitor source-system entry practices and repeat "
+                    "duplicate patterns."
+                ),
+            })
+
+        if action_rows:
+            st.dataframe(
+                pd.DataFrame(action_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.success(
+                "No major CXO attention signals were identified "
+                "from the currently uploaded dataset."
+            )
+
+        # --------------------------------------------------------
+        # DATA QUALITY BREAKDOWN
+        # --------------------------------------------------------
+        if not dq_exception_breakdown.empty:
+            st.markdown(
+                "### Critical Field Quality"
+            )
+
+            st.dataframe(
+                dq_exception_breakdown,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.info(
+            "Executive Insights are intended for leadership review. "
+            "Operational investigation should continue in Clean Data Summary, "
+            "Unique Children Analysis, Duplicate Intelligence and Remarks Intelligence."
+        )
 
     with tab2:
         st.subheader("Clean Data Summary After Deduplication")
