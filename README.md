@@ -92,3 +92,28 @@ The page automatically surfaces management attention signals for:
 
 These are **review signals**, not automatic conclusions that programme delivery or data entry is incorrect. Operational validation should be completed using the detailed dashboard pages and source records.
 
+
+---
+
+## Version 3.1.0 - Performance Optimization
+
+Version 3.1.0 keeps the same dashboard logic and CXO KPIs while reducing unnecessary processing on Streamlit Cloud.
+
+### Performance changes
+
+- **Cached file parsing:** uploaded CSV/Excel bytes are parsed once and reused.
+- **Cached DQI analysis:** duplicate processing, clean summaries and Remarks Intelligence are cached against the uploaded file content.
+- **Content-based file key:** SHA-256 is used so a genuinely different file is not mistaken for a previous upload with the same filename/size.
+- **Lazy Excel/PDF generation:** the 15-sheet Excel workbook and PDF report are no longer created during initial analysis.
+- **Prepare Download Files:** full Excel, PDF and ZIP packages are generated only when requested from the Downloads page.
+- **Faster footer cleanup:** Power BI footer detection uses column-wise vectorised matching instead of row-by-row Python processing.
+- **Optimized Remarks Intelligence:** remark text is normalized once, percentages use vectorised calculations, and theme expansion uses `explode()` instead of `iterrows()`.
+- **Cached Unique Children dataset:** the one-latest-record-per-child calculation is reused across Streamlit reruns.
+
+### Expected user experience
+
+The first analysis still needs to read and analyse the uploaded file, but the dashboard should become available sooner because large downloadable reports are deferred.
+
+Changing filters or interacting with the dashboard should also avoid repeating the full upload/analysis pipeline.
+
+The first time a user clicks **Prepare Download Files**, there may still be a short wait while the Excel, PDF and ZIP files are created. This work is intentionally deferred until it is actually needed.

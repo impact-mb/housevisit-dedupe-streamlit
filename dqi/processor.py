@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-1.0.0
+3.1.0
 """
 
 import pandas as pd
@@ -19,13 +19,34 @@ from .config import SCHEMA, DEDUPE_KEY_COLS
 
 
 def remove_footer_and_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove empty rows and Power BI footer rows such as Applied filters."""
+    """
+    Remove empty rows and Power BI footer rows such as Applied filters.
+
+    Column-wise vectorised string matching is used instead of a Python
+    row-by-row apply, which is substantially faster on larger files.
+    """
     df = df.copy().dropna(how="all")
-    footer_mask = df.apply(
-        lambda row: row.astype(str).str.contains("Applied filters", case=False, na=False).any(),
-        axis=1,
+
+    if df.empty:
+        return df.reset_index(drop=True)
+
+    footer_mask = (
+        df.astype("string")
+        .apply(
+            lambda col: col.str.contains(
+                "Applied filters",
+                case=False,
+                na=False,
+                regex=False,
+            )
+        )
+        .any(axis=1)
     )
-    return df[~footer_mask].reset_index(drop=True)
+
+    return (
+        df.loc[~footer_mask]
+        .reset_index(drop=True)
+    )
 
 
 def apply_schema_types(df: pd.DataFrame) -> pd.DataFrame:

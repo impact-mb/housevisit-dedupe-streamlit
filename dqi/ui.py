@@ -11,7 +11,7 @@ Magic Bus Data Team
 
 Version:
 --------
-3.0.0
+3.1.0
 """
 
 import base64
@@ -24,7 +24,12 @@ from .config import APP_NAME, APP_VERSION, BUILD, OWNER, SPORTS_QUOTES
 from .faq import render_faq
 from .processor import pct, make_summary_table
 from .spatial import render_india_state_map
-from .exporter import create_zip_bundle, excel_sheet_explanation_df
+from .exporter import (
+    create_clean_summary_pdf,
+    create_excel_outputs,
+    create_zip_bundle,
+    excel_sheet_explanation_df,
+)
 
 
 def inject_css():
@@ -106,6 +111,7 @@ def get_risk_label(rate: float) -> str:
 
 
 
+@st.cache_data(show_spinner=False, max_entries=10)
 def build_unique_children_dataset(clean_dataset: pd.DataFrame) -> pd.DataFrame:
     """
     Keep exactly one row per CHILD ID using the latest HOUSE VISIT DATE.
@@ -187,7 +193,7 @@ def build_unique_children_dataset(clean_dataset: pd.DataFrame) -> pd.DataFrame:
 
 def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_summary,
                      clean_summary_tables, remarks_dataset, remarks_summary, ym_summary,
-                     repeated_remarks, theme_summary, output_xlsx, charts_pdf, uploaded_name: str):
+                     repeated_remarks, theme_summary, uploaded_name: str):
     """Render complete dashboard after analysis."""
     total_records = len(full_dataset)
     clean_records = len(clean_dataset)
@@ -1324,12 +1330,138 @@ def render_dashboard(full_dataset, clean_dataset, duplicate_dataset, duplicate_s
 
     with tab8:
         st.subheader("Download Reports")
-        st.download_button("Download Complete DQI Intelligence Excel", data=output_xlsx.getvalue(), file_name=output_name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", on_click="ignore", key="download_excel")
-        st.download_button("Download Clean Data Summary Report PDF", data=charts_pdf.getvalue(), file_name=charts_pdf_name, mime="application/pdf", on_click="ignore", key="download_pdf")
-        zip_buffer = create_zip_bundle({output_name: output_xlsx.getvalue(), charts_pdf_name: charts_pdf.getvalue()})
-        st.download_button("Download ZIP Bundle", data=zip_buffer.getvalue(), file_name=zip_name, mime="application/zip", on_click="ignore", key="download_zip")
-        st.markdown("### Excel sheets included")
-        st.dataframe(excel_sheet_explanation_df(), use_container_width=True, hide_index=True)
+
+        st.caption(
+            "Performance mode: the large Excel, PDF and ZIP files are "
+            "generated only when you request them. This keeps initial "
+            "dashboard loading faster."
+        )
+
+        output_name = (
+            f"{base_name}_DQI_Intelligence_Output.xlsx"
+        )
+
+        charts_pdf_name = (
+            f"{base_name}_Clean_Data_Summary_Report.pdf"
+        )
+
+        zip_name = (
+            f"{base_name}_DQI_Intelligence_Bundle.zip"
+        )
+
+        package_key = (
+            f"dqi_download_package_{base_name}"
+        )
+
+        if st.button(
+            "Prepare Download Files",
+            type="primary",
+            key="prepare_download_files",
+        ):
+            with st.spinner(
+                "Preparing Excel, PDF and ZIP files..."
+            ):
+                output_xlsx = create_excel_outputs(
+                    full_dataset,
+                    clean_dataset,
+                    duplicate_dataset,
+                    duplicate_summary,
+                    clean_summary_tables,
+                    remarks_dataset,
+                    remarks_summary,
+                    ym_summary,
+                    repeated_remarks,
+                    theme_summary,
+                )
+
+                report_date = (
+                    datetime.now()
+                    .strftime("%d %b %Y")
+                )
+
+                charts_pdf = (
+                    create_clean_summary_pdf(
+                        clean_summary_tables,
+                        report_date=report_date,
+                    )
+                )
+
+                zip_buffer = create_zip_bundle({
+                    output_name:
+                        output_xlsx.getvalue(),
+                    charts_pdf_name:
+                        charts_pdf.getvalue(),
+                })
+
+                st.session_state[
+                    package_key
+                ] = {
+                    "excel": output_xlsx.getvalue(),
+                    "pdf": charts_pdf.getvalue(),
+                    "zip": zip_buffer.getvalue(),
+                }
+
+        package = st.session_state.get(
+            package_key
+        )
+
+        if package:
+            st.success(
+                "Download files are ready."
+            )
+
+            d1, d2, d3 = st.columns(3)
+
+            with d1:
+                st.download_button(
+                    "Download Complete DQI Excel",
+                    data=package["excel"],
+                    file_name=output_name,
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
+                    on_click="ignore",
+                    key="download_excel",
+                    use_container_width=True,
+                )
+
+            with d2:
+                st.download_button(
+                    "Download Clean Summary PDF",
+                    data=package["pdf"],
+                    file_name=charts_pdf_name,
+                    mime="application/pdf",
+                    on_click="ignore",
+                    key="download_pdf",
+                    use_container_width=True,
+                )
+
+            with d3:
+                st.download_button(
+                    "Download ZIP Bundle",
+                    data=package["zip"],
+                    file_name=zip_name,
+                    mime="application/zip",
+                    on_click="ignore",
+                    key="download_zip",
+                    use_container_width=True,
+                )
+        else:
+            st.info(
+                "Click 'Prepare Download Files' only when you need "
+                "the full Excel/PDF/ZIP package."
+            )
+
+        st.markdown(
+            "### Excel sheets included"
+        )
+
+        st.dataframe(
+            excel_sheet_explanation_df(),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_upload_prompt():
